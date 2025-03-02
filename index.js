@@ -1,5 +1,5 @@
 const axios = require("axios");
-const nodemailer = require("nodemailer");
+const sgMail = require("@sendgrid/mail");
 const cron = require("node-cron");
 const fs = require("fs").promises;
 const path = require("path");
@@ -12,17 +12,21 @@ dotenv.config({ path: ".env.local" });
 const config = {
   dataFile: path.join(__dirname, "data", "listings.json"),
   email: {
-    from: "blendi.maliqi93@gmail.com",
+    from: "noreply@blendimaliqi.com",
     to: "blendi.maliqi93@gmail.com",
-    service: "gmail",
-    auth: {
-      user: "blendi.maliqi93@gmail.com",
-      pass: process.env.APP_PASSWORD, // Get password from environment variable
-    },
+    apiKey: process.env.SENDGRID_API_KEY || process.env.APP_PASSWORD,
   },
   checkInterval: "*/10 * * * *", // Check every 10 minutes
   binanceApiUrl: "https://api.binance.com/api/v3/exchangeInfo",
 };
+
+// Initialize SendGrid with API key
+if (config.email.apiKey) {
+  sgMail.setApiKey(config.email.apiKey);
+  console.log("SendGrid initialized with API key");
+} else {
+  console.error("No SendGrid API key found in environment variables!");
+}
 
 // Ensure data directory exists
 async function ensureDataDirExists() {
@@ -51,40 +55,50 @@ async function saveListings(data) {
 
 // Send email notification
 async function sendEmail(newListings) {
-  const transporter = nodemailer.createTransport({
-    service: config.email.service,
-    auth: config.email.auth,
-  });
-
-  const symbolList = newListings
-    .map(
-      (symbol) =>
-        `<li>${symbol.symbol} - Base Asset: ${symbol.baseAsset}, Quote Asset: ${symbol.quoteAsset}</li>`
-    )
-    .join("");
-
-  const mailOptions = {
-    from: config.email.from,
-    to: config.email.to,
-    subject: `🚨 URGENT: New Binance Listing Found! (${newListings.length})`,
-    priority: "high", // Set high priority
-    headers: {
-      Importance: "high",
-      "X-Priority": "1",
-    },
-    html: `
-      <h2 style="color: #FF0000;">New Cryptocurrency Listings on Binance!</h2>
-      <p style="font-weight: bold;">The following new symbols have been detected:</p>
-      <ul>${symbolList}</ul>
-      <p>Check Binance for more details.</p>
-    `,
-  };
+  console.log("Attempting to send email notification via SendGrid...");
+  console.log(
+    `Using email configuration: From=${config.email.from}, To=${config.email.to}`
+  );
+  console.log(`SendGrid API key exists: ${!!config.email.apiKey}`);
 
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log("Email sent:", info.response);
+    const symbolList = newListings
+      .map(
+        (symbol) =>
+          `<li>${symbol.symbol} - Base Asset: ${symbol.baseAsset}, Quote Asset: ${symbol.quoteAsset}</li>`
+      )
+      .join("");
+
+    const msg = {
+      to: config.email.to,
+      from: config.email.from, // Verified SendGrid sender
+      replyTo: config.email.from, // Set reply-to to the same address
+      subject: `🚨 URGENT: New Binance Listing Found! (${newListings.length})`,
+      html: `
+        <h2 style="color: #FF0000;">New Cryptocurrency Listings on Binance!</h2>
+        <p style="font-weight: bold;">The following new symbols have been detected:</p>
+        <ul>${symbolList}</ul>
+        <p>Check Binance for more details.</p>
+        <p style="font-size: 12px; color: #666;">This is an automated notification from your Crypto Tracker. Please do not reply to this email.</p>
+      `,
+    };
+
+    console.log(
+      "Sending email with the following options:",
+      JSON.stringify(msg, null, 2)
+    );
+    const response = await sgMail.send(msg);
+    console.log(
+      "Email sent successfully via SendGrid:",
+      response[0].statusCode
+    );
+    return true;
   } catch (error) {
-    console.error("Error sending email:", error);
+    console.error("Error sending email via SendGrid:", error);
+    if (error.response) {
+      console.error("SendGrid API error details:", error.response.body);
+    }
+    return false;
   }
 }
 
@@ -122,17 +136,45 @@ async function checkNewListings() {
 
 // Test email function
 async function testEmailSetup() {
+  console.log("=== TESTING EMAIL SETUP ===");
+  console.log("Environment variables:");
+  console.log(`- NODE_ENV: ${process.env.NODE_ENV}`);
+  console.log(`- SENDGRID_API_KEY exists: ${!!process.env.SENDGRID_API_KEY}`);
+  console.log(
+    `- Using fallback APP_PASSWORD: ${
+      !process.env.SENDGRID_API_KEY && !!process.env.APP_PASSWORD
+    }`
+  );
+
+  if (!config.email.apiKey) {
+    console.error(
+      "❌ No SendGrid API key found! Email functionality will not work."
+    );
+    return;
+  }
+
   try {
-    await sendEmail([
+    console.log("Attempting to send test email via SendGrid...");
+    const success = await sendEmail([
       {
         symbol: "TEST-BTC",
         baseAsset: "TEST",
         quoteAsset: "BTC",
       },
     ]);
-    console.log("✅ Test email sent successfully! Check your inbox.");
+
+    if (success) {
+      console.log(
+        "✅ Test email sent successfully via SendGrid! Check your inbox."
+      );
+    } else {
+      console.error(
+        "❌ Test email failed to send (no error thrown but operation failed)."
+      );
+    }
   } catch (error) {
     console.error("❌ Error sending test email:", error);
+    console.error("Stack trace:", error.stack);
   }
 }
 
