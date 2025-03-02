@@ -16,7 +16,7 @@ const config = {
     to: "blendi.maliqi93@gmail.com",
     apiKey: process.env.SENDGRID_API_KEY || process.env.APP_PASSWORD,
   },
-  checkInterval: "*/10 * * * *", // Check every 10 minutes
+  checkInterval: "*/15 * * * *", // Check every 15 minutes
   binanceApiUrl: "https://api.binance.com/api/v3/exchangeInfo",
 };
 
