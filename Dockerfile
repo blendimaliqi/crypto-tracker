@@ -30,13 +30,23 @@ RUN apt-get update && apt-get install -y \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies first (better caching)
+# Copy package files first for better layer caching
 COPY package*.json ./
+
+# Install dependencies
 RUN npm install
 
-# Install browsers as root
-RUN npx playwright install chromium
-RUN npx playwright install-deps chromium
+# Create directories for Playwright
+RUN mkdir -p /app/data /root/.cache
+RUN chmod -R 777 /root/.cache
+
+# Install Playwright browsers properly
+ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
+RUN npx playwright install chromium --with-deps
+
+# Verify browser installation
+RUN ls -la /root/.cache/ms-playwright
+RUN find /root/.cache/ms-playwright -name "headless_shell" -o -name "chrome" -o -name "chrome.exe" | xargs -r ls -la || echo "No browser binaries found"
 
 # Copy application code
 COPY . .
@@ -44,10 +54,8 @@ COPY . .
 # Create data directory
 RUN mkdir -p /app/data
 
-# Set browser cache permissions for all users
-RUN mkdir -p /root/.cache && chmod -R 777 /root/.cache
-RUN mkdir -p /app/.cache && chmod -R 777 /app/.cache
-RUN mkdir -p /.cache && chmod -R 777 /.cache
+# Ensure browser cache permissions are set correctly
+RUN chmod -R 777 /root/.cache/ms-playwright
 
 # Set environment variable for Node.js to report uncaught exceptions
 ENV NODE_ENV=production

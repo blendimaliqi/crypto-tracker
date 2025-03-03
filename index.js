@@ -571,16 +571,105 @@ const binance = {
       console.log("Fetching Binance announcements using Playwright...");
       console.log(`Using URL: ${announcementConfig.binance.announcementUrl}`);
 
-      // Import Playwright - do this dynamically to avoid loading it unless needed
+      // Import Playwright and fs to check for browser
       const { chromium } = require("playwright");
+      const fs = require("fs");
+      const path = require("path");
 
-      console.log("Launching Playwright browser with debug info...");
-
-      // Log the current directory and environment
+      // Log detailed environment information
       console.log(`Current directory: ${process.cwd()}`);
       console.log(`NODE_ENV: ${process.env.NODE_ENV}`);
+      console.log(
+        `PLAYWRIGHT_BROWSERS_PATH: ${
+          process.env.PLAYWRIGHT_BROWSERS_PATH || "not set"
+        }`
+      );
 
-      // Launch a headless browser with detailed debugging
+      // Check if the browser exists in various locations
+      const possibleBrowserPaths = [
+        "/root/.cache/ms-playwright",
+        "/app/node_modules/playwright/.local-browsers",
+        path.join(process.cwd(), "node_modules/playwright/.local-browsers"),
+      ];
+
+      for (const browserPath of possibleBrowserPaths) {
+        console.log(`Checking for browser in: ${browserPath}`);
+        if (fs.existsSync(browserPath)) {
+          console.log(`✅ Directory exists: ${browserPath}`);
+          try {
+            const files = fs.readdirSync(browserPath);
+            console.log(`Files in ${browserPath}: ${files.join(", ")}`);
+          } catch (e) {
+            console.log(`Error reading directory: ${e.message}`);
+          }
+        } else {
+          console.log(`❌ Directory does not exist: ${browserPath}`);
+        }
+      }
+
+      // Check if the specific error path exists
+      const specificErrorPath =
+        "/root/.cache/ms-playwright/chromium_headless_shell-1155/chrome-linux/headless_shell";
+      if (fs.existsSync(specificErrorPath)) {
+        console.log(
+          `✅ Browser executable exists at error path: ${specificErrorPath}`
+        );
+      } else {
+        console.log(
+          `❌ Browser executable does not exist at error path: ${specificErrorPath}`
+        );
+        // Try to find chrome-linux or similar directories
+        if (fs.existsSync("/root/.cache/ms-playwright")) {
+          console.log("Searching for any browser installation...");
+          const findChrome = (dir) => {
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+              const fullPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                console.log(`Checking directory: ${fullPath}`);
+                if (entry.name === "chrome-linux") {
+                  console.log(`✅ Found chrome-linux at: ${fullPath}`);
+                  return fullPath;
+                }
+                try {
+                  const result = findChrome(fullPath);
+                  if (result) return result;
+                } catch (e) {
+                  // Ignore and continue
+                }
+              } else if (
+                entry.name === "headless_shell" ||
+                entry.name === "chrome"
+              ) {
+                console.log(`✅ Found browser executable at: ${fullPath}`);
+                return fullPath;
+              }
+            }
+            return null;
+          };
+
+          try {
+            findChrome("/root/.cache/ms-playwright");
+          } catch (e) {
+            console.log(`Error during browser search: ${e.message}`);
+          }
+        }
+      }
+
+      console.log("Installing Playwright browser on demand...");
+      // Install browsers on demand - this ensures they're available
+      try {
+        const { execSync } = require("child_process");
+        const output = execSync("npx playwright install chromium --with-deps", {
+          encoding: "utf8",
+        });
+        console.log("Playwright install output:", output);
+      } catch (installError) {
+        console.error("Error installing browser:", installError.message);
+      }
+
+      // Launch browser with explicit executable path
+      console.log("Launching Playwright browser...");
       browser = await chromium.launch({
         headless: true,
         args: [
@@ -589,7 +678,8 @@ const binance = {
           "--disable-dev-shm-usage",
         ],
         logger: {
-          isEnabled: (name, severity) => true,
+          isEnabled: (name, severity) =>
+            severity === "error" || severity === "warning",
           log: (name, severity, message, args) =>
             console.log(`[Playwright ${severity}] ${name}: ${message}`),
         },
