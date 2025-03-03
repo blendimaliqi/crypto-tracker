@@ -80,7 +80,7 @@ if (config.email.apiKey) {
   sgMail.setApiKey(config.email.apiKey);
   console.log("SendGrid initialized with API key");
 } else {
-  console.error("No SendGrid API key found in environment variables!");
+  console.error("No SendGrid API key found in environment variables !");
 }
 
 // Ensure data directory exists
