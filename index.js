@@ -669,14 +669,29 @@ const binance = {
         console.error("Error installing browser:", installError.message);
       }
 
-      // Launch browser with explicit executable path
-      console.log("Launching Playwright browser...");
+      // Path for storing cookies
+      const cookiesPath = path.join(
+        process.cwd(),
+        "/app/data/binance-cookies.json"
+      );
+
+      // Launch browser with stealth mode settings
+      console.log("Launching Playwright browser with stealth settings...");
       browser = await chromium.launch({
         headless: true,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
+          "--disable-accelerated-2d-canvas",
+          "--no-first-run",
+          "--no-zygote",
+          "--disable-gpu",
+          "--hide-scrollbars",
+          "--mute-audio",
+          "--disable-web-security",
+          "--disable-notifications",
+          "--disable-extensions",
         ],
         logger: {
           isEnabled: (name, severity) =>
@@ -687,24 +702,114 @@ const binance = {
       });
       console.log("Successfully launched Playwright browser");
 
-      // Create a new context and page
+      // Create a new persistent context that will store cookies
       const context = await browser.newContext({
         userAgent:
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        viewport: { width: 1280, height: 800 },
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        viewport: { width: 1920, height: 1080 },
+        screen: { width: 1920, height: 1080 },
+        hasTouch: false,
+        isMobile: false,
+        deviceScaleFactor: 1,
+        acceptDownloads: true,
+        ignoreHTTPSErrors: true,
+        javaScriptEnabled: true,
+        locale: "en-US",
+        timezoneId: "America/New_York",
+        geolocation: { longitude: -73.935242, latitude: 40.73061 },
+        permissions: ["geolocation"],
+        colorScheme: "light",
+        // Add fingerprint matching common browser patterns
+        httpCredentials: undefined,
       });
-      console.log("Created browser context");
+
+      // Load cookies if they exist
+      try {
+        if (fs.existsSync(cookiesPath)) {
+          console.log("Loading saved cookies...");
+          const cookiesString = fs.readFileSync(cookiesPath);
+          const cookies = JSON.parse(cookiesString);
+          await context.addCookies(cookies);
+          console.log("Cookies loaded successfully");
+        }
+      } catch (cookieError) {
+        console.log(
+          "No cookies found or error loading cookies:",
+          cookieError.message
+        );
+      }
 
       const page = await context.newPage();
       console.log("Created new page");
 
-      // Navigate to the Binance announcements page
+      // Add human-like behavior to emulate real user
+      await page.addInitScript(() => {
+        // Override the navigator properties
+        const newProto = navigator.__proto__;
+        delete newProto.webdriver;
+        navigator.__proto__ = newProto;
+
+        // Add randomization to window dimensions
+        const originalWidth = window.innerWidth;
+        const originalHeight = window.innerHeight;
+        Object.defineProperty(window, "innerWidth", {
+          get: function () {
+            return originalWidth;
+          },
+        });
+        Object.defineProperty(window, "innerHeight", {
+          get: function () {
+            return originalHeight;
+          },
+        });
+      });
+
+      // Add random sleep function for human-like timing
+      const randomSleep = async (min, max) => {
+        const sleepTime = Math.floor(Math.random() * (max - min + 1)) + min;
+        console.log(`Waiting for ${sleepTime}ms...`);
+        await page.waitForTimeout(sleepTime);
+      };
+
+      // Navigate to the Binance announcements page with human-like behavior
       console.log("Navigating to Binance announcements page...");
+
+      // First go to the homepage
+      await page.goto("https://www.binance.com/en", {
+        waitUntil: "domcontentloaded",
+        timeout: 60000,
+      });
+
+      console.log("Loaded Binance homepage");
+      await randomSleep(2000, 5000);
+
+      // Then navigate to the announcements page
       await page.goto(announcementConfig.binance.announcementUrl, {
         waitUntil: "networkidle",
         timeout: 60000,
       });
       console.log("Page loaded successfully");
+
+      await randomSleep(1000, 3000);
+
+      // Simulate scrolling like a human
+      console.log("Simulating human-like scrolling...");
+      await page.evaluate(() => {
+        return new Promise((resolve) => {
+          let totalHeight = 0;
+          const distance = 100;
+          const timer = setInterval(() => {
+            window.scrollBy(0, distance);
+            totalHeight += distance;
+            if (totalHeight >= document.body.scrollHeight) {
+              clearInterval(timer);
+              resolve();
+            }
+          }, 100);
+        });
+      });
+
+      await randomSleep(1000, 2000);
 
       // Wait for the content to load - using selectors visible in the screenshot
       await page
@@ -714,6 +819,15 @@ const binance = {
             "Timeout waiting for .bn-flex selector, continuing anyway"
           )
         );
+
+      // Save cookies for future use
+      try {
+        const cookies = await context.cookies();
+        fs.writeFileSync(cookiesPath, JSON.stringify(cookies));
+        console.log("Cookies saved for future use");
+      } catch (cookieError) {
+        console.error("Failed to save cookies:", cookieError.message);
+      }
 
       // Take a screenshot for debugging in all environments
       try {
@@ -730,6 +844,48 @@ const binance = {
       console.log(
         `First 500 chars of page content: ${pageContent.substring(0, 500)}`
       );
+
+      // Check if we hit a verification page
+      if (
+        pageContent.includes("Human Verification") ||
+        pageContent.includes("verify") ||
+        pageContent.includes("captcha")
+      ) {
+        console.log(
+          "DETECTED HUMAN VERIFICATION PAGE - attempting to bypass..."
+        );
+
+        // Try to solve simple verification if available
+        try {
+          // Look for common verification buttons/sliders and try to click them
+          await page
+            .click('button:has-text("Verify")', { timeout: 5000 })
+            .catch(() => {});
+          await page
+            .click('button:has-text("I am human")', { timeout: 5000 })
+            .catch(() => {});
+          await page.click(".slider", { timeout: 5000 }).catch(() => {});
+
+          // Wait to see if verification completes
+          await randomSleep(5000, 8000);
+
+          // Check if we're past verification
+          const newContent = await page.content();
+          if (
+            !newContent.includes("Human Verification") &&
+            !newContent.includes("verify")
+          ) {
+            console.log("Successfully bypassed verification!");
+          } else {
+            console.log("Unable to automatically bypass verification");
+          }
+        } catch (verifyError) {
+          console.log(
+            "Error during verification bypass attempt:",
+            verifyError.message
+          );
+        }
+      }
 
       // Extract announcement data from the page
       console.log(
