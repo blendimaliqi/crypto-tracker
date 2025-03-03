@@ -36,35 +36,38 @@ COPY package*.json ./
 # Install dependencies
 RUN npm install
 
-# Create directories for Playwright
-RUN mkdir -p /app/data /root/.cache
-RUN chmod -R 777 /root/.cache
+# Create persistent browser directory in /app instead of /root
+# This is more likely to be preserved across container restarts
+RUN mkdir -p /app/data /app/.playwright-browsers
+RUN chmod -R 777 /app/.playwright-browsers
 
-# Install Playwright browsers properly
-ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
-RUN npx playwright install chromium --with-deps
+# Set environment variable for Playwright browsers - make it permanent
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers
 
-# Verify browser installation
-RUN ls -la /root/.cache/ms-playwright
-RUN find /root/.cache/ms-playwright -name "headless_shell" -o -name "chrome" -o -name "chrome.exe" | xargs -r ls -la || echo "No browser binaries found"
+# Install Playwright browsers in the persistent location
+RUN PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers npx playwright install chromium --with-deps
+
+# Verify browser installation and output detailed info
+RUN ls -la /app/.playwright-browsers
+RUN find /app/.playwright-browsers -type f -name "headless_shell" -o -name "chrome" -o -name "chrome.exe" | xargs -r ls -la || echo "No browser binaries found with exact names, listing all executables:"
+RUN find /app/.playwright-browsers -type f -executable | grep -v ".so" | xargs -r ls -la || echo "No executable files found"
 
 # Copy application code
 COPY . .
 
-# Create data directory
-RUN mkdir -p /app/data
-
-# Ensure browser cache permissions are set correctly
-RUN chmod -R 777 /root/.cache/ms-playwright
+# Add startup script to ensure environment is properly configured
+RUN echo '#!/bin/bash\necho "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH"\necho "Listing browser files:"\nfind /app/.playwright-browsers -type f -executable -not -path "*/\.*" | head -10\nexec node index.js' > /app/startup.sh
+RUN chmod +x /app/startup.sh
 
 # Set environment variable for Node.js to report uncaught exceptions
 ENV NODE_ENV=production
 
 # Create a volume for persistent data storage
+# But don't make it override the browser installation
 VOLUME ["/app/data"]
 
 # Add a healthcheck to verify the application is running
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 CMD node -e "try { require('fs').statSync('/app/data/listings.json'); process.exit(0); } catch(e) { process.exit(1); }"
 
-# Command to run the application
-CMD ["node", "index.js"] 
+# Command to run the application via the startup script
+CMD ["/app/startup.sh"] 

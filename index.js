@@ -587,6 +587,7 @@ const binance = {
 
       // Check if the browser exists in various locations
       const possibleBrowserPaths = [
+        "/app/.playwright-browsers",
         "/root/.cache/ms-playwright",
         "/app/node_modules/playwright/.local-browsers",
         path.join(process.cwd(), "node_modules/playwright/.local-browsers"),
