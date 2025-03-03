@@ -567,492 +567,302 @@ const announcementConfig = {
 const binance = {
   async fetchAnnouncements() {
     try {
-      console.log("Fetching Binance announcements...");
+      console.log("Fetching Binance announcements using Playwright...");
       console.log(`Using URL: ${announcementConfig.binance.announcementUrl}`);
 
-      // IMPORTANT: Binance uses a dynamic site with JavaScript that can't be properly scraped with Cheerio
-      // Ideally, we'd use Puppeteer or similar here to handle JavaScript rendering
-      console.log(
-        "Note: For proper Binance scraping, we should use Puppeteer or similar to handle dynamic content"
-      );
+      // Import Playwright - do this dynamically to avoid loading it unless needed
+      const { chromium } = require("playwright");
 
-      // Add timeout and headers to avoid blocking
-      const response = await axios.get(
-        announcementConfig.binance.announcementUrl,
-        {
-          timeout: 30000,
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            Accept:
-              "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            Connection: "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Cache-Control": "max-age=0",
-            Referer: "https://www.binance.com/",
-          },
-        }
-      );
+      // Launch a headless browser
+      const browser = await chromium.launch({
+        headless: true,
+      });
+      console.log("Launched Playwright browser");
 
-      console.log(`Binance response status: ${response.status}`);
+      // Create a new context and page
+      const context = await browser.newContext({
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        viewport: { width: 1280, height: 800 },
+      });
+      const page = await context.newPage();
 
-      if (response.status !== 200) {
-        console.error(
-          `Binance returned non-200 status code: ${response.status}`
+      // Navigate to the Binance announcements page
+      console.log("Navigating to Binance announcements page...");
+      await page.goto(announcementConfig.binance.announcementUrl, {
+        waitUntil: "networkidle",
+        timeout: 60000,
+      });
+      console.log("Page loaded successfully");
+
+      // Wait for the content to load - using selectors visible in the screenshot
+      await page
+        .waitForSelector(".bn-flex", { timeout: 30000 })
+        .catch(() =>
+          console.log(
+            "Timeout waiting for .bn-flex selector, continuing anyway"
+          )
         );
-        return [];
+
+      // Take a screenshot for debugging in development
+      if (process.env.NODE_ENV !== "production") {
+        await page.screenshot({ path: "binance-debug.png", fullPage: true });
+        console.log("Saved debug screenshot to binance-debug.png");
       }
 
-      const $ = cheerio.load(response.data);
-      console.log("Successfully loaded Binance HTML with cheerio");
-
-      const announcements = [];
-
-      // Based on the screenshot, target specific typography elements that contain listings
+      // Extract announcement data from the page
       console.log(
-        "Targeting specific typography elements for announcements..."
+        "Extracting announcement data based on specific HTML structure..."
       );
+      const announcements = await page.evaluate(() => {
+        const results = [];
 
-      // Try to find h3 elements with typography class (seen in screenshot)
-      const typographyElements = $(
-        'h3.typography-body1-1, h3[class*="typography"], div[class*="typography"]'
-      );
-      console.log(`Found ${typographyElements.length} typography elements`);
-
-      typographyElements.each((i, element) => {
-        try {
-          const text = $(element).text().trim();
-          if (!text || text.length < 10) return;
-
-          console.log(`Found typography text: "${text}"`);
-
-          // Check if it's a listing announcement (contains "Add", "List", token names, etc.)
-          const listingKeywords = [
-            "will add",
-            "adds",
-            "adding",
-            "will list",
-            "lists",
-            "listing",
-            "added",
-            "new cryptocurrency",
-          ];
-
-          const hasListingKeyword = listingKeywords.some((kw) =>
-            text.toLowerCase().includes(kw)
-          );
-
-          if (hasListingKeyword) {
-            // Get URL from parent a tag if possible
-            let url = "";
-            const parentLink = $(element).closest("a");
-            if (parentLink.length) {
-              url = $(parentLink).attr("href");
-            }
-
-            if (!url) {
-              // Try to find nearby link with announcement details
-              const nearbyLink = $(element).parent().find("a");
-              if (nearbyLink.length) {
-                url = $(nearbyLink).attr("href");
+        // Function to extract symbols from title
+        const extractSymbols = (text) => {
+          const symbols = [];
+          const symbolMatches = text.match(/\(([A-Z0-9]{2,10})\)/g);
+          if (symbolMatches) {
+            symbolMatches.forEach((match) => {
+              const symbol = match.replace(/[()]/g, "");
+              if (
+                symbol.length >= 2 &&
+                symbol.length <= 10 &&
+                !["FOR", "THE", "AND", "USD", "USDT", "BTC", "ETH"].includes(
+                  symbol
+                )
+              ) {
+                symbols.push(symbol);
               }
-            }
+            });
+          }
+          return symbols;
+        };
 
-            // Fallback URL
-            if (!url) {
-              url = announcementConfig.binance.announcementUrl;
-            }
+        // Method 1: Target the specific structure seen in the screenshot
+        // Look for typography headline elements
+        const headlines = document.querySelectorAll(
+          'h2.typography-headline5, h2[class*="typography"], .typography-headline5'
+        );
+        console.log(`Found ${headlines.length} headline elements`);
 
-            // Make sure URL is absolute
-            if (url && !url.startsWith("http")) {
-              url = `https://www.binance.com${url}`;
-            }
+        headlines.forEach((headline) => {
+          const text = headline.textContent.trim();
+          if (text && text.includes("Listing")) {
+            // Found a listing headline, now find the actual announcements
+            const parentSection = headline.closest(".bn-flex");
+            if (parentSection) {
+              // Find all announcement links in this section
+              const links = parentSection.querySelectorAll(
+                'a[class*="text-Primary"], a.text-PrimaryText'
+              );
 
-            // Extract symbols using regex - look for (TOKEN) pattern
-            const symbols = [];
-            const symbolMatches = text.match(/\(([A-Z0-9]{2,10})\)/g);
-            if (symbolMatches) {
-              symbolMatches.forEach((match) => {
-                const symbol = match.replace(/[()]/g, "");
-                if (
-                  symbol.length >= 2 &&
-                  symbol.length <= 10 &&
-                  !["FOR", "THE", "AND", "USD", "USDT", "BTC", "ETH"].includes(
-                    symbol
-                  )
-                ) {
-                  symbols.push(symbol);
+              links.forEach((link) => {
+                const title = link.textContent.trim();
+                if (!title || title.length < 10) return;
+
+                // Check if it contains listing-related keywords
+                const keywords = [
+                  "list",
+                  "add",
+                  "adds",
+                  "adding",
+                  "added",
+                  "will list",
+                  "support",
+                  "new crypto",
+                ];
+                const hasKeyword = keywords.some((kw) =>
+                  title.toLowerCase().includes(kw)
+                );
+
+                if (hasKeyword) {
+                  const url = link.href;
+                  const symbols = extractSymbols(title);
+
+                  results.push({
+                    title,
+                    url,
+                    date: new Date().toISOString(),
+                    symbols,
+                    exchange: "Binance",
+                    source: "announcement",
+                  });
                 }
               });
             }
+          }
+        });
 
-            console.log(
-              `Found listing announcement: "${text}" with symbols: ${
-                symbols.join(", ") || "none"
-              }`
+        // Method 2: Target the specific bn-flex structure
+        const flexItems = document.querySelectorAll(
+          ".bn-flex.flex-col.gap-6, .bn-flex.flex-col.gap-4"
+        );
+        console.log(`Found ${flexItems.length} flex container elements`);
+
+        flexItems.forEach((container) => {
+          // Look for links within these containers
+          const links = container.querySelectorAll("a");
+
+          links.forEach((link) => {
+            const title = link.textContent.trim();
+            if (!title || title.length < 10) return;
+
+            // Check if it contains listing-related keywords
+            const keywords = [
+              "list",
+              "add",
+              "adds",
+              "adding",
+              "added",
+              "will list",
+              "support",
+              "new crypto",
+            ];
+            const hasKeyword = keywords.some((kw) =>
+              title.toLowerCase().includes(kw)
             );
 
-            announcements.push({
-              title: text,
+            if (hasKeyword) {
+              const url = link.href;
+              const symbols = extractSymbols(title);
+
+              // Check for duplicates before adding
+              const isDuplicate = results.some(
+                (item) =>
+                  item.title === title || (item.url === url && url !== "")
+              );
+
+              if (!isDuplicate) {
+                results.push({
+                  title,
+                  url,
+                  date: new Date().toISOString(),
+                  symbols,
+                  exchange: "Binance",
+                  source: "announcement",
+                });
+              }
+            }
+          });
+        });
+
+        // Method 3: Direct targeting of announcement items based on the screenshot
+        const announcementItems = document.querySelectorAll(
+          'a[href*="/support/announcement/detail/"]'
+        );
+        console.log(
+          `Found ${announcementItems.length} direct announcement links`
+        );
+
+        announcementItems.forEach((item) => {
+          const title = item.textContent.trim();
+          if (!title || title.length < 10) return;
+
+          const url = item.href;
+          const symbols = extractSymbols(title);
+
+          // Check for duplicates before adding
+          const isDuplicate = results.some(
+            (existing) =>
+              existing.title === title || (existing.url === url && url !== "")
+          );
+
+          if (!isDuplicate) {
+            results.push({
+              title,
               url,
-              date: new Date(),
+              date: new Date().toISOString(),
               symbols,
               exchange: "Binance",
               source: "announcement",
             });
           }
-        } catch (err) {
-          console.log(`Error processing typography element: ${err.message}`);
-        }
-      });
-
-      // If no announcements found with primary method, try fallback methods
-      if (announcements.length === 0) {
-        // Method 1: Extract from script tags (existing code)
-        const scriptTags = $("script");
-        console.log(`Found ${scriptTags.length} script tags`);
-
-        let foundJsonData = false;
-        scriptTags.each((i, element) => {
-          const scriptContent = $(element).html();
-          if (!scriptContent) return;
-
-          try {
-            // Try to find any JSON data that looks like an array of announcements
-            // This is a more aggressive approach to find data in script tags
-            const jsonMatches = scriptContent.match(
-              /(\[\s*\{\s*"[^"]+"\s*:\s*[^{]+\}\s*(?:,\s*\{[^}]+\}\s*)*\])/g
-            );
-
-            if (jsonMatches) {
-              for (const match of jsonMatches) {
-                try {
-                  const jsonData = JSON.parse(match);
-
-                  // Check if this looks like an array of announcement objects
-                  if (
-                    Array.isArray(jsonData) &&
-                    jsonData.length > 0 &&
-                    (jsonData[0].title ||
-                      jsonData[0].name ||
-                      jsonData[0].headline)
-                  ) {
-                    console.log(
-                      `Found potential announcement data with ${jsonData.length} items`
-                    );
-                    foundJsonData = true;
-
-                    jsonData.forEach((item) => {
-                      // Extract title using various possible field names
-                      const title =
-                        item.title ||
-                        item.name ||
-                        item.headline ||
-                        item.subject ||
-                        "";
-                      let url = item.url || item.link || item.href || "";
-
-                      // Filter out navigational items
-                      if (
-                        title.startsWith("ba-") ||
-                        title.startsWith("footer") ||
-                        title.includes("_") ||
-                        title.length < 10
-                      ) {
-                        return;
-                      }
-
-                      // Fix URL if needed
-                      if (url && !url.startsWith("http")) {
-                        url = `https://www.binance.com${url}`;
-                      }
-
-                      if (title && url) {
-                        const symbols = [];
-
-                        // Extract symbols from title
-                        const symbolMatches =
-                          title.match(/\(([A-Z0-9]{2,10})\)/g);
-                        if (symbolMatches) {
-                          symbolMatches.forEach((match) => {
-                            const symbol = match.replace(/[()]/g, "");
-                            if (
-                              symbol.length >= 2 &&
-                              symbol.length <= 10 &&
-                              ![
-                                "FOR",
-                                "THE",
-                                "AND",
-                                "USD",
-                                "USDT",
-                                "BTC",
-                                "ETH",
-                              ].includes(symbol)
-                            ) {
-                              symbols.push(symbol);
-                            }
-                          });
-                        }
-
-                        announcements.push({
-                          title,
-                          url,
-                          date: new Date(),
-                          symbols,
-                          exchange: "Binance",
-                          source: "announcement",
-                        });
-
-                        console.log(
-                          `Added Binance announcement from JSON: "${title}" with symbols: ${
-                            symbols.join(", ") || "none"
-                          }`
-                        );
-                      }
-                    });
-                  }
-                } catch (e) {
-                  // Ignore parsing errors for individual matches
-                }
-              }
-            }
-
-            // Look for patterns like "list":[{...announcement data...}]
-            const listMatch = scriptContent.match(/"list":\s*(\[.+?\])/s);
-            if (listMatch && listMatch[1]) {
-              console.log("Found list data in script tag");
-              foundJsonData = true;
-
-              try {
-                // Try to parse the JSON array
-                const jsonStr = listMatch[1].replace(/\\"/g, '"');
-                let announcementData = JSON.parse(jsonStr);
-
-                if (
-                  Array.isArray(announcementData) &&
-                  announcementData.length > 0
-                ) {
-                  console.log(
-                    `Found ${announcementData.length} announcements in JSON data`
-                  );
-
-                  announcementData.forEach((item) => {
-                    // Extract relevant information from the JSON
-                    // Log each item to see what's available
-                    console.log(
-                      "Processing announcement:",
-                      JSON.stringify(item).substring(0, 200)
-                    );
-
-                    // Try multiple possible field names
-                    const title =
-                      item.title ||
-                      item.name ||
-                      item.summary ||
-                      item.headline ||
-                      item.subject ||
-                      "";
-                    let url =
-                      item.url || item.link || item.href || item.path || "";
-
-                    // Filter out menu and footer items
-                    if (
-                      title.startsWith("ba-") ||
-                      title.startsWith("footer") ||
-                      title.includes("_") ||
-                      title.length < 10
-                    ) {
-                      return;
-                    }
-
-                    // If we have an ID but no URL, try to construct one
-                    if (!url && item.id) {
-                      url = `/en/support/announcement/${item.id}`;
-                    }
-
-                    // Fix URL if needed
-                    if (url && !url.startsWith("http")) {
-                      url = `https://www.binance.com${url}`;
-                    }
-
-                    console.log(`Extracted title: "${title}", url: ${url}`);
-
-                    if (title && url) {
-                      // Check if this looks like a listing announcement
-                      const keywords = [
-                        "list",
-                        "add",
-                        "adds",
-                        "added",
-                        "adding",
-                        "support",
-                        "delist",
-                        "new",
-                        "token",
-                      ];
-
-                      // Get content from code or content fields if available
-                      let content = "";
-                      if (item.content) content += item.content + " ";
-                      if (item.code) content += item.code + " ";
-                      if (item.description) content += item.description + " ";
-                      if (item.text) content += item.text + " ";
-
-                      // Check title and content for keywords
-                      const fullText = (title + " " + content).toLowerCase();
-                      const hasKeyword = keywords.some((kw) =>
-                        fullText.includes(kw)
-                      );
-
-                      // Extract symbols
-                      const symbols = [];
-
-                      // Try to extract from tags if available
-                      if (item.tags && Array.isArray(item.tags)) {
-                        item.tags.forEach((tag) => {
-                          if (
-                            /^[A-Z0-9]{2,10}$/.test(tag) &&
-                            !["BTC", "ETH", "USD", "USDT"].includes(tag)
-                          ) {
-                            symbols.push(tag);
-                          }
-                        });
-                      }
-
-                      // Extract from title as fallback
-                      const symbolMatches =
-                        title.match(/\(([A-Z0-9]{2,10})\)/g);
-                      if (symbolMatches) {
-                        symbolMatches.forEach((match) => {
-                          const symbol = match.replace(/[()]/g, "");
-                          if (
-                            symbol.length >= 2 &&
-                            symbol.length <= 10 &&
-                            !symbols.includes(symbol) &&
-                            !["BTC", "ETH", "USD", "USDT"].includes(symbol)
-                          ) {
-                            symbols.push(symbol);
-                          }
-                        });
-                      }
-
-                      announcements.push({
-                        title,
-                        url,
-                        date: new Date(),
-                        symbols,
-                        exchange: "Binance",
-                        source: "announcement",
-                      });
-
-                      console.log(
-                        `Added Binance announcement from script: "${title}" with symbols: ${
-                          symbols.join(", ") || "none"
-                        }`
-                      );
-                    }
-                  });
-                }
-              } catch (jsonError) {
-                console.log(
-                  "Error parsing JSON from script tag:",
-                  jsonError.message
-                );
-              }
-            }
-          } catch (err) {
-            // Ignore errors in individual script tags
-          }
         });
 
-        // Method 2: If no JSON data found, try direct extraction from links
-        if (announcements.length === 0) {
-          console.log(
-            "No JSON data found, trying direct extraction from links"
-          );
+        // Method 4: Look for date elements and their parent containers
+        const dateElements = document.querySelectorAll(
+          '.typography-caption1, [class*="typography"][class*="body"]'
+        );
+        dateElements.forEach((dateEl) => {
+          // Check if this looks like a date
+          const text = dateEl.textContent.trim();
+          if (
+            text.match(/\d{4}-\d{2}-\d{2}/) ||
+            text.match(/\d{2}-\d{2}-\d{4}/)
+          ) {
+            // This is likely a date element, check its parent for announcement
+            const parent = dateEl.parentElement;
+            if (parent) {
+              const linkEl =
+                parent.querySelector("a") ||
+                parent.previousElementSibling?.querySelector("a");
+              if (linkEl) {
+                const title = linkEl.textContent.trim();
+                if (!title || title.length < 10) return;
 
-          // Find all links
-          const links = $("a");
-          console.log(`Found ${links.length} links on the page`);
+                const url = linkEl.href;
+                const symbols = extractSymbols(title);
 
-          links.each((i, element) => {
-            try {
-              const href = $(element).attr("href");
-              const text = $(element).text().trim();
-
-              // If it looks like an announcement link with relevant keywords
-              if (
-                href &&
-                text &&
-                href.includes("/announcement") &&
-                text.length > 10 &&
-                !text.startsWith("ba-") &&
-                !text.startsWith("footer") &&
-                !text.includes("_")
-              ) {
-                const keywords = [
-                  "list",
-                  "add",
-                  "adds",
-                  "added",
-                  "adding",
-                  "support",
-                  "delist",
-                ];
-                const hasKeyword = keywords.some((kw) =>
-                  text.toLowerCase().includes(kw)
+                // Check for duplicates before adding
+                const isDuplicate = results.some(
+                  (existing) =>
+                    existing.title === title ||
+                    (existing.url === url && url !== "")
                 );
 
-                if (hasKeyword) {
-                  const fullUrl = href.startsWith("http")
-                    ? href
-                    : `https://www.binance.com${href}`;
-
-                  // Extract symbols
-                  const symbols = [];
-                  const symbolMatches = text.match(/\(([A-Z0-9]{2,10})\)/g);
-                  if (symbolMatches) {
-                    symbolMatches.forEach((match) => {
-                      const symbol = match.replace(/[()]/g, "");
-                      if (symbol.length >= 2 && symbol.length <= 10) {
-                        symbols.push(symbol);
-                      }
-                    });
-                  }
-
-                  announcements.push({
-                    title: text,
-                    url: fullUrl,
-                    date: new Date(),
+                if (!isDuplicate) {
+                  results.push({
+                    title,
+                    url,
+                    date: new Date().toISOString(),
                     symbols,
                     exchange: "Binance",
                     source: "announcement",
                   });
-
-                  console.log(
-                    `Added Binance announcement from link: "${text}" with symbols: ${
-                      symbols.join(", ") || "none"
-                    }`
-                  );
                 }
               }
-            } catch (err) {
-              // Ignore errors in individual links
             }
-          });
-        }
-      }
+          }
+        });
+
+        return results;
+      });
 
       console.log(
-        `Total Binance announcements processed: ${announcements.length}`
+        `Extracted ${announcements.length} announcements from Binance using Playwright`
       );
+
+      // Print details of found announcements
+      announcements.forEach((announcement) => {
+        console.log(
+          `Found Binance announcement: "${announcement.title}" with symbols: ${
+            announcement.symbols.join(", ") || "none"
+          }`
+        );
+      });
+
+      // Close the browser
+      await browser.close();
+      console.log("Closed Playwright browser");
+
       return announcements;
     } catch (error) {
-      console.error("Error fetching Binance announcements:", error.message);
+      console.error(
+        "Error fetching Binance announcements with Playwright:",
+        error
+      );
+
+      // Try to ensure browser is closed in case of error
+      try {
+        if (browser) await browser.close();
+      } catch (e) {
+        // Ignore browser close errors
+      }
+
       return [];
     }
   },
+
   getDataFilePath() {
     return path.join(config.dataPath, announcementConfig.binance.dataFile);
   },
