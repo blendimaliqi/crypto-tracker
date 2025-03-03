@@ -566,831 +566,209 @@ const binance = {
             Connection: "keep-alive",
             "Upgrade-Insecure-Requests": "1",
             "Cache-Control": "max-age=0",
+            Referer: "https://www.binance.com/",
+            "sec-ch-ua":
+              '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
           },
+          // Try to use a proxy if the URL is likely to be blocked
+          ...(process.env.HTTPS_PROXY
+            ? {
+                proxy: false,
+                httpsAgent: new require("https").Agent({
+                  proxy: process.env.HTTPS_PROXY,
+                  rejectUnauthorized: false,
+                }),
+              }
+            : {}),
         }
       );
 
       console.log(`Binance response status: ${response.status}`);
 
-      const html = response.data;
-      // Log a small sample of the HTML to verify we're getting content
-      console.log(`HTML sample (first 200 chars): ${html.substring(0, 200)}`);
+      if (response.status !== 200) {
+        console.error(
+          `Binance returned non-200 status code: ${response.status}`
+        );
+        return [];
+      }
 
-      const $ = cheerio.load(html);
+      const $ = cheerio.load(response.data);
+      console.log("Successfully loaded Binance HTML with cheerio");
+
       const announcements = [];
 
-      // Count elements to verify selectors are working
-      const totalElements = $(".bn-flex.w-full.flex-col.gap-4").length;
-      console.log(`Found ${totalElements} potential announcement elements`);
+      // Log the number of announcement elements found
+      const announcementElements = $(".css-wpq04z");
+      console.log(
+        `Found ${announcementElements.length} announcement elements on Binance page`
+      );
 
-      // Find announcement elements using the correct selectors based on current page structure
-      $(".bn-flex.w-full.flex-col.gap-4").each((i, element) => {
+      $(".css-wpq04z").each((i, element) => {
         try {
-          // Title is in an H3 with class typography-body1-1
-          const titleElement = $(element).find("h3.typography-body1-1");
+          const titleElement = $(element).find(".css-1ej4hfo");
           const title = titleElement.text().trim();
 
-          console.log(
-            `Processing element ${i + 1}/${totalElements}, title: ${title}`
+          // Skip if no title found
+          if (!title) {
+            console.log(
+              `Skipping Binance announcement #${i + 1}: No title found`
+            );
+            return;
+          }
+
+          console.log(`Processing Binance announcement: "${title}"`);
+
+          // Only process announcements with "list" or "add" in title
+          const keywords = [
+            "list",
+            "add ",
+            "adds ",
+            "added ",
+            "adding ",
+            "support",
+            "delist",
+          ];
+          const hasKeyword = keywords.some((keyword) =>
+            title.toLowerCase().includes(keyword)
           );
 
-          // Check if it's a listing-related announcement
-          if (
-            title.match(/list|will add|new trading|launch|added|trading pair/i)
-          ) {
-            console.log(`Found listing-related announcement: ${title}`);
-
-            // URL is in an A tag parent of the title
-            const linkElement = $(element).find("a");
-            const url = linkElement.attr("href");
-            const fullUrl = url
-              ? url.startsWith("http")
-                ? url
-                : `https://www.binance.com${url}`
-              : "";
-
-            if (!fullUrl) {
-              console.log(`Warning: No URL found for announcement: ${title}`);
-              return; // Skip this announcement
-            }
-
-            // Extract date if available - usually in a div without children
-            let date = new Date().toISOString();
-            const dateText = $(element)
-              .find(".bn-flex.flex-col.gap-1 div:not(:has(*))")
-              .text()
-              .trim();
-            if (dateText) {
-              try {
-                console.log(`Found date text: ${dateText}`);
-                // Check if the date has a year that seems like a future year (site formatting quirk)
-                const dateMatch = dateText.match(/(\d{4})-(\d{2})-(\d{2})/);
-                if (dateMatch) {
-                  const year = parseInt(dateMatch[1]);
-                  const currentYear = new Date().getFullYear();
-                  // If the year is in the future, assume it's a typo and use current year
-                  if (year > currentYear + 1) {
-                    const correctedDate = dateText.replace(year, currentYear);
-                    date = new Date(correctedDate).toISOString();
-                    console.log(
-                      `Corrected future date ${dateText} to ${correctedDate}`
-                    );
-                  } else {
-                    date = new Date(dateText).toISOString();
-                  }
-                } else {
-                  date = new Date(dateText).toISOString();
-                }
-              } catch (e) {
-                // Keep default date
-                console.log(
-                  `Could not parse date: ${dateText}. Error: ${e.message}`
-                );
-              }
-            } else {
-              console.log(`No date text found for announcement: ${title}`);
-            }
-
-            // Extract potential coin symbols with improved filtering
-            const titleText = title.toUpperCase();
-
-            // Look for symbols in parentheses - most reliable source
-            const symbolsInParentheses =
-              titleText.match(/\(([A-Z0-9]{2,10})\)/g) || [];
-            const extractedFromParentheses = symbolsInParentheses.map((s) =>
-              s.replace(/[()]/g, "")
+          if (!hasKeyword) {
+            console.log(
+              `Skipping Binance announcement: "${title}" - No relevant keywords`
             );
-
-            // Look for specific formats like: "Will Add X", "Launch X", etc.
-            let extractedFromContext = [];
-
-            if (title.match(/will add|listing|adds|list/i)) {
-              const addMatch = title.match(
-                /will add|adds|listing|list\s+([A-Z0-9]{2,10})/i
-              );
-              if (addMatch && addMatch[1]) {
-                extractedFromContext.push(addMatch[1].toUpperCase());
-              }
-            }
-
-            // Look for symbols that appear alongside the word "token" or "coin"
-            const tokenMatches =
-              titleText.match(
-                /([A-Z0-9]{2,10})\s+TOKEN|TOKEN\s+([A-Z0-9]{2,10})/g
-              ) || [];
-            tokenMatches.forEach((match) => {
-              const parts = match.split(/\s+/);
-              parts.forEach((part) => {
-                if (part !== "TOKEN" && /^[A-Z0-9]{2,10}$/.test(part)) {
-                  extractedFromContext.push(part);
-                }
-              });
-            });
-
-            // Look for patterns like BTCUSDT, ETHUSDT (typical trading pair format)
-            const tradingPairMatches =
-              titleText.match(/[A-Z0-9]{2,8}(USDT|BTC|ETH|BNB)/g) || [];
-            tradingPairMatches.forEach((pair) => {
-              const base = pair.replace(/(USDT|BTC|ETH|BNB)$/, "");
-              if (base.length >= 2 && base.length <= 8) {
-                extractedFromContext.push(base);
-              }
-            });
-
-            // General token symbols - with extensive filtering to remove common words
-            const generalSymbolMatches =
-              titleText.match(/\b[A-Z0-9]{2,8}\b/g) || [];
-
-            // Combine all sources with priority to more reliable sources
-            const allSymbols = [
-              ...extractedFromParentheses,
-              ...extractedFromContext,
-              ...generalSymbolMatches,
-            ];
-
-            // More extensive filtering of common words and false positives
-            const commonWords = [
-              "BINANCE",
-              "NEW",
-              "ADD",
-              "ADDS",
-              "WILL",
-              "THE",
-              "FOR",
-              "AND",
-              "WITH",
-              "USDⓈ",
-              "USD",
-              "USDT",
-              "USDC",
-              "BUSD",
-              "EUR",
-              "GBP",
-              "JPY",
-              "BTC",
-              "ETH",
-              "BNB",
-              "SPOT",
-              "MARGIN",
-              "FUTURES",
-              "EARN",
-              "TRADING",
-              "PAIRS",
-              "PAIR",
-              "ZERO",
-              "FEE",
-              "FEES",
-              "BUY",
-              "SELL",
-              "CONVERT",
-              "LAUNCH",
-              "LIST",
-              "NOTICE",
-              "CAP",
-              "PRE",
-              "MARKET",
-              "SERVICES",
-              "BOTS",
-              "COPY",
-              "TOKEN",
-              "TOKENS",
-              "CRYPTO",
-            ];
-
-            // Keep only unique symbols after filtering
-            const symbols = [...new Set(allSymbols)].filter(
-              (s) =>
-                !commonWords.includes(s) &&
-                s.length >= 2 &&
-                s.length <= 8 &&
-                !/^\d+$/.test(s) // Filter out numbers-only strings
-            );
-
-            console.log(`Extracted symbols: ${symbols.join(", ")}`);
-
-            if (fullUrl && symbols.length > 0) {
-              console.log(`Adding Binance announcement: ${title}`);
-              announcements.push({
-                title,
-                url: fullUrl,
-                date,
-                symbols,
-                exchange: "binance",
-                source: "announcement",
-              });
-            } else {
-              console.log(
-                `Skipping announcement (no URL or no symbols): ${title}`
-              );
-            }
+            return;
           }
-        } catch (elementError) {
-          console.error(`Error processing element ${i}:`, elementError);
+
+          const url = $(element).find("a").attr("href");
+          const fullUrl = url ? `https://www.binance.com${url}` : "";
+
+          if (!fullUrl) {
+            console.log(
+              `Skipping Binance announcement: "${title}" - No URL found`
+            );
+            return;
+          }
+
+          const dateText = $(element).find(".css-1fhwoir").text().trim();
+          console.log(`Binance announcement date text: "${dateText}"`);
+
+          // Parse date from text
+          let date = new Date();
+          const matches = dateText.match(/(\d{4}-\d{2}-\d{2})/);
+          if (matches && matches[1]) {
+            const dateStr = matches[1];
+            date = new Date(dateStr);
+
+            // Check for invalid future dates (sometimes Binance shows 2025 incorrectly)
+            const currentYear = new Date().getFullYear();
+            if (date.getFullYear() > currentYear + 1) {
+              console.log(
+                `Correcting future date ${date.toISOString()} to current year`
+              );
+              date.setFullYear(currentYear);
+            }
+          } else {
+            console.log(
+              `Could not parse date from "${dateText}", using current date`
+            );
+          }
+
+          // Extract potential symbols from title
+          const symbols = [];
+
+          // Look for symbols in parentheses
+          const symbolMatches = title.match(/\(([A-Z0-9]{2,10})\)/g);
+          if (symbolMatches) {
+            symbolMatches.forEach((match) => {
+              const symbol = match.replace(/[()]/g, "");
+              if (symbol.length >= 2 && symbol.length <= 10) {
+                symbols.push(symbol);
+              }
+            });
+          }
+
+          // Extract tokens mentioned as "Token Name (SYMBOL)"
+          const tokenSymbolMatch = title.match(/(\w+)\s+\(([A-Z0-9]{2,10})\)/g);
+          if (tokenSymbolMatch) {
+            tokenSymbolMatch.forEach((match) => {
+              const symbolMatch = match.match(/\(([A-Z0-9]{2,10})\)/);
+              if (symbolMatch && symbolMatch[1]) {
+                const symbol = symbolMatch[1];
+                if (
+                  symbol.length >= 2 &&
+                  symbol.length <= 10 &&
+                  !symbols.includes(symbol)
+                ) {
+                  symbols.push(symbol);
+                }
+              }
+            });
+          }
+
+          // Look for general symbols by word pattern
+          const words = title.split(/\s+/);
+          words.forEach((word) => {
+            // Match typical crypto symbols: all caps, 2-10 chars, may contain numbers
+            if (/^[A-Z0-9]{2,10}$/.test(word) && !symbols.includes(word)) {
+              if (!["FOR", "AND", "THE", "NEW", "USD", "USDT"].includes(word)) {
+                symbols.push(word);
+              }
+            }
+          });
+
+          console.log(
+            `Extracted symbols for "${title}": ${
+              symbols.join(", ") || "none found"
+            }`
+          );
+
+          announcements.push({
+            title,
+            url: fullUrl,
+            date,
+            symbols,
+            exchange: "Binance",
+            source: "announcement",
+          });
+
+          console.log(`Successfully added Binance announcement: "${title}"`);
+        } catch (error) {
+          console.error(
+            `Error processing Binance announcement element #${i + 1}:`,
+            error
+          );
         }
       });
 
-      console.log(`Total Binance announcements found: ${announcements.length}`);
-
-      // Debug info - write to file if in development
-      if (
-        process.env.NODE_ENV === "development" ||
-        announcements.length === 0
-      ) {
-        try {
-          const debugInfo = {
-            timestamp: new Date().toISOString(),
-            totalElements,
-            announcements,
-          };
-          // Write debug info to file
-          const fs = require("fs");
-          fs.writeFileSync(
-            "binance-debug.json",
-            JSON.stringify(debugInfo, null, 2)
-          );
-          console.log("Debug info written to binance-debug.json");
-        } catch (debugError) {
-          console.error("Error writing debug info:", debugError);
-        }
-      }
-
-      return { announcements };
+      console.log(
+        `Total Binance announcements processed: ${announcements.length}`
+      );
+      return announcements;
     } catch (error) {
       console.error("Error fetching Binance announcements:", error.message);
+      // Log more details about the error
       if (error.response) {
-        console.error("Response status:", error.response.status);
+        // The request was made and the server responded with a status code
+        // that falls out of the range of 2xx
+        console.error("Binance error response data:", error.response.data);
+        console.error("Binance error response status:", error.response.status);
         console.error(
-          "Response headers:",
-          JSON.stringify(error.response.headers)
+          "Binance error response headers:",
+          error.response.headers
         );
+      } else if (error.request) {
+        // The request was made but no response was received
+        console.error("Binance no response received:", error.request);
+      } else {
+        // Something happened in setting up the request that triggered an Error
+        console.error("Binance error config:", error.config);
       }
-      return { announcements: [] };
+      return [];
     }
   },
   getDataFilePath() {
     return path.join(config.dataPath, announcementConfig.binance.dataFile);
   },
 };
-
-const okx = {
-  async fetchAnnouncements() {
-    try {
-      console.log("Fetching OKX announcements...");
-      console.log(`Using URL: ${announcementConfig.okx.announcementUrl}`);
-
-      // Add timeout and headers to prevent blocking
-      const response = await axios.get(announcementConfig.okx.announcementUrl, {
-        timeout: 30000,
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-          Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.5",
-          Connection: "keep-alive",
-          "Upgrade-Insecure-Requests": "1",
-          "Cache-Control": "max-age=0",
-        },
-      });
-
-      console.log(`OKX response status: ${response.status}`);
-
-      const html = response.data;
-      const $ = cheerio.load(html);
-      const announcements = [];
-
-      // Find announcement elements on the new listings page
-      let count = 0;
-      $("a").each((i, element) => {
-        const title = $(element).text().trim();
-        const url = $(element).attr("href");
-
-        // Filter by title to find listings
-        if (
-          title &&
-          url &&
-          (title.match(/OKX to list/i) ||
-            title.match(/for spot trading/i) ||
-            title.match(/perpetual/i) ||
-            title.match(/listing/i))
-        ) {
-          count++;
-          console.log(`Found OKX announcement #${count}: ${title}`);
-
-          const fullUrl = url.startsWith("http")
-            ? url
-            : `https://www.okx.com${url}`;
-
-          // Try to get the date from a sibling element containing date info
-          let date = new Date().toISOString();
-          const parent = $(element).parent();
-          const siblings = parent.siblings();
-          let dateFound = false;
-
-          // Look for a sibling element with date information
-          siblings.each((j, sibling) => {
-            const siblingText = $(sibling).text().trim();
-            if (siblingText.includes("Published on")) {
-              try {
-                console.log(`Found date text: ${siblingText}`);
-                const dateText = siblingText.replace("Published on", "").trim();
-
-                // Check if there's a future year issue
-                const dateMatch = dateText.match(
-                  /([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})/
-                );
-                if (dateMatch) {
-                  const year = parseInt(dateMatch[3]);
-                  const currentYear = new Date().getFullYear();
-
-                  // If the year is in the future by more than one year, assume it's a formatting issue
-                  if (year > currentYear + 1) {
-                    const correctedDateText = dateText.replace(
-                      year,
-                      currentYear
-                    );
-                    console.log(
-                      `Correcting future date ${dateText} to ${correctedDateText}`
-                    );
-                    date = new Date(correctedDateText).toISOString();
-                  } else {
-                    date = new Date(dateText).toISOString();
-                  }
-                } else {
-                  date = new Date(dateText).toISOString();
-                }
-                dateFound = true;
-              } catch (e) {
-                console.log(`Error parsing date: ${e.message}`);
-                // Keep default date
-              }
-            }
-          });
-
-          if (!dateFound) {
-            console.log(`No date found for: ${title}, using current date`);
-          }
-
-          // Extract potential coin symbols with improved filtering
-          const titleText = title.toUpperCase();
-
-          // Extract main coins with targeted approaches
-          let mainCoins = [];
-
-          // Method 1: Extract from "OKX to list X" pattern
-          if (titleText.includes("OKX TO LIST")) {
-            const listMatch = titleText.match(/OKX TO LIST ([A-Z0-9]{2,10})\s/);
-            if (listMatch && listMatch[1]) {
-              mainCoins.push(listMatch[1]);
-            }
-          }
-
-          // Method 2: Extract from "OKX to list X (Full Name)" pattern
-          const parenthesesSymbols =
-            titleText.match(/\(([A-Z0-9]{2,10})\)/g) || [];
-          mainCoins.push(
-            ...parenthesesSymbols.map((s) => s.replace(/[()]/g, ""))
-          );
-
-          // Method 3: Extract from paired words - X Network, X Protocol, etc.
-          const pairedSymbols =
-            titleText.match(
-              /([A-Z0-9]{2,10})\s+(NETWORK|PROTOCOL|CHAIN|TOKEN)/g
-            ) || [];
-          pairedSymbols.forEach((match) => {
-            const parts = match.split(/\s+/);
-            if (parts[0] && parts[0].length >= 2 && parts[0].length <= 10) {
-              mainCoins.push(parts[0]);
-            }
-          });
-
-          // Method 4: Look for trading pairs like XUSDT
-          const tradingPairs =
-            titleText.match(/([A-Z0-9]{2,8})(USDT|BTC|ETH|USD)/g) || [];
-          tradingPairs.forEach((pair) => {
-            const base = pair.replace(/(USDT|BTC|ETH|USD)$/, "");
-            if (base.length >= 2 && base.length <= 8) {
-              mainCoins.push(base);
-            }
-          });
-
-          // Backup method: Extract all potential symbols
-          const generalSymbols = titleText.match(/\b[A-Z0-9]{2,8}\b/g) || [];
-
-          // Filter common words and non-tokens
-          const commonWords = [
-            "OKX",
-            "NEW",
-            "AND",
-            "FOR",
-            "THE",
-            "WILL",
-            "LIST",
-            "TO",
-            "ADD",
-            "SPOT",
-            "TRADING",
-            "MARGIN",
-            "FUTURES",
-            "WITH",
-            "ALONG",
-            "ITS",
-            "SIMPLE",
-            "EARN",
-            "CRYPTO",
-            "PERPETUAL",
-            "PUBLISH",
-            "ON",
-            "FEB",
-            "JAN",
-            "MAR",
-            "APR",
-            "MAY",
-            "JUN",
-            "JUL",
-            "AUG",
-            "SEP",
-            "OCT",
-            "NOV",
-            "DEC",
-            "PUBLISHED",
-            "USD",
-            "USDT",
-            "BTC",
-            "ETH",
-          ];
-
-          // When no main coins found, use general symbols with filtering
-          let symbols =
-            mainCoins.length > 0
-              ? [...new Set(mainCoins)]
-              : [...new Set(generalSymbols)].filter(
-                  (s) =>
-                    !commonWords.includes(s) &&
-                    s.length >= 2 &&
-                    s.length <= 8 &&
-                    !/^\d+$/.test(s) // Filter out numbers-only
-                );
-
-          console.log(`Extracted symbols: ${symbols.join(", ") || "none"}`);
-
-          // Final filter to remove any residual noise
-          symbols = symbols.filter((s) => !commonWords.includes(s));
-
-          if (symbols.length > 0) {
-            console.log(
-              `Adding announcement with symbols: ${symbols.join(", ")}`
-            );
-            announcements.push({
-              title,
-              url: fullUrl,
-              date,
-              symbols,
-              exchange: "okx",
-              source: "announcement",
-            });
-          } else {
-            console.log(`Skipping announcement (no symbols found): ${title}`);
-          }
-        }
-      });
-
-      console.log(`Total OKX announcements found: ${announcements.length}`);
-      return { announcements };
-    } catch (error) {
-      console.error("Error fetching OKX announcements:", error.message);
-      if (error.response) {
-        console.error("Response status:", error.response.status);
-        console.error(
-          "Response headers:",
-          JSON.stringify(error.response.headers)
-        );
-      }
-      return { announcements: [] };
-    }
-  },
-  getDataFilePath() {
-    return path.join(config.dataPath, announcementConfig.okx.dataFile);
-  },
-};
-
-// Modify checkNewAnnouncements to only check Binance and OKX
-async function checkNewAnnouncements() {
-  console.log("Checking for new announcements...");
-
-  const allNewAnnouncements = [];
-  // Only check Binance and OKX announcements
-  const exchanges = ["binance", "okx"];
-
-  for (const exchange of exchanges) {
-    if (
-      !announcementConfig[exchange] ||
-      !announcementConfig[exchange].enabled
-    ) {
-      continue;
-    }
-
-    console.log(`Checking ${exchange} announcements...`);
-    const exchangeImpl = eval(exchange);
-
-    try {
-      // Load previous announcements
-      const previousAnnouncements = await loadPreviousAnnouncements(exchange);
-
-      // Fetch new announcements
-      const result = await exchangeImpl.fetchAnnouncements();
-      const newAnnouncements = result.announcements.filter((announcement) => {
-        return !previousAnnouncements.some(
-          (prev) =>
-            prev.url === announcement.url || prev.title === announcement.title
-        );
-      });
-
-      if (newAnnouncements.length > 0) {
-        console.log(
-          `Found ${newAnnouncements.length} new ${exchange} announcements!`
-        );
-
-        // Save all announcements (new and old)
-        await saveAnnouncements(
-          exchange,
-          [...previousAnnouncements, ...newAnnouncements].slice(-100) // Keep only the last 100
-        );
-
-        allNewAnnouncements.push(...newAnnouncements);
-      } else {
-        console.log(`No new ${exchange} announcements found.`);
-      }
-    } catch (error) {
-      console.error(`Error checking ${exchange} announcements:`, error);
-    }
-  }
-
-  if (allNewAnnouncements.length > 0) {
-    console.log(
-      `Found a total of ${allNewAnnouncements.length} new announcements across all exchanges.`
-    );
-
-    // Send email notification
-    try {
-      await sendAnnouncementEmail(allNewAnnouncements);
-    } catch (error) {
-      console.error("Error sending announcement email:", error);
-    }
-  } else {
-    console.log("No new announcements found on any exchange.");
-  }
-}
-
-// Helper functions for announcements
-async function loadPreviousAnnouncements(exchange) {
-  try {
-    const dataFilePath = eval(exchange).getDataFilePath();
-    const data = await fs.readFile(dataFilePath, "utf8");
-    return JSON.parse(data);
-  } catch (error) {
-    console.log(
-      `No previous ${exchange} announcements found, creating new file...`
-    );
-    return [];
-  }
-}
-
-async function saveAnnouncements(exchange, announcements) {
-  try {
-    const dataFilePath = eval(exchange).getDataFilePath();
-    await fs.writeFile(dataFilePath, JSON.stringify(announcements, null, 2));
-    console.log(
-      `Saved ${announcements.length} ${exchange} announcements to ${dataFilePath}`
-    );
-    return true;
-  } catch (error) {
-    console.error(`Error saving ${exchange} announcements:`, error);
-    return false;
-  }
-}
-
-// Send email about new listing announcements
-async function sendAnnouncementEmail(newAnnouncements) {
-  if (!config.email.enabled) {
-    console.log("Email notifications are disabled. Skipping notification.");
-    return false;
-  }
-
-  console.log("Preparing email for new listing announcements...");
-
-  // Create HTML for the email body
-  let emailBodyHtml = `
-    <h2>New Cryptocurrency Listing Announcements Detected</h2>
-    <p>The following new listing announcements were detected:</p>
-    <table border="1" cellpadding="5" style="border-collapse: collapse;">
-      <tr style="background-color: #f0f0f0;">
-        <th>Exchange</th>
-        <th>Title</th>
-        <th>Potential Coins</th>
-        <th>Announcement Date</th>
-      </tr>
-  `;
-
-  // Plain text version
-  let emailBodyText = "New Cryptocurrency Listing Announcements Detected\n\n";
-
-  // Sort by exchange name
-  newAnnouncements.sort((a, b) => a.exchange.localeCompare(b.exchange));
-
-  // Add each announcement to the email
-  for (const announcement of newAnnouncements) {
-    const symbolsText =
-      announcement.symbols.length > 0
-        ? announcement.symbols.join(", ")
-        : "Unknown";
-
-    // Add to HTML email
-    emailBodyHtml += `
-      <tr>
-        <td>${announcement.exchange.toUpperCase()}</td>
-        <td><a href="${announcement.url}">${announcement.title}</a></td>
-        <td>${symbolsText}</td>
-        <td>${new Date(announcement.date).toLocaleString()}</td>
-      </tr>
-    `;
-
-    // Add to plain text email
-    emailBodyText += `
-Exchange: ${announcement.exchange.toUpperCase()}
-Title: ${announcement.title}
-Potential Coins: ${symbolsText}
-Date: ${new Date(announcement.date).toLocaleString()}
-URL: ${announcement.url}
--------------------
-    `;
-  }
-
-  emailBodyHtml += `
-    </table>
-    <p>These coins may experience price movements soon due to these announcements.</p>
-    <p><small>This email was sent by the Crypto Listing Announcements Monitor.</small></p>
-  `;
-
-  emailBodyText +=
-    "\nThese coins may experience price movements soon due to these announcements.";
-
-  // Prepare email
-  const subject = `🚨 ${newAnnouncements.length} New Crypto Listing Announcements Detected`;
-
-  try {
-    if (process.env.SENDGRID_API_KEY) {
-      // Use SendGrid
-      await sgMail.send({
-        to: config.email.to,
-        from: config.email.from,
-        subject: subject,
-        text: emailBodyText,
-        html: emailBodyHtml,
-      });
-      console.log(
-        "Announcement notification email sent successfully via SendGrid!"
-      );
-    } else if (process.env.APP_PASSWORD) {
-      // Use Nodemailer as fallback
-      let transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: config.email.from,
-          pass: process.env.APP_PASSWORD,
-        },
-      });
-
-      await transporter.sendMail({
-        from: config.email.from,
-        to: config.email.to,
-        subject: subject,
-        text: emailBodyText,
-        html: emailBodyHtml,
-      });
-      console.log(
-        "Announcement notification email sent successfully via Nodemailer!"
-      );
-    } else {
-      console.error("No email credentials available.");
-      return false;
-    }
-    return true;
-  } catch (error) {
-    console.error("Error sending announcement email:", error);
-    return false;
-  }
-}
-
-// Modify the init function to better check configuration
-async function init() {
-  try {
-    console.log("Starting cryptocurrency listing monitor...");
-
-    await ensureDataDirExists();
-
-    // Test email setup if enabled
-    if (config.email.testOnStartup && config.email.enabled) {
-      await testEmailSetup();
-    }
-
-    // Verify exchange settings
-    console.log("Checking configuration...");
-    let issuesFound = false;
-
-    // Check announcement settings
-    if (
-      !announcementConfig.binance.enabled &&
-      !announcementConfig.okx.enabled
-    ) {
-      console.warn(
-        "⚠️ Warning: Both Binance and OKX announcement monitoring are disabled. Set ENABLE_BINANCE_ANNOUNCEMENTS=true and/or ENABLE_OKX_ANNOUNCEMENTS=true in the .env.local file to enable them."
-      );
-      issuesFound = true;
-    } else {
-      const enabledCount =
-        (announcementConfig.binance.enabled ? 1 : 0) +
-        (announcementConfig.okx.enabled ? 1 : 0);
-      console.log(`✓ ${enabledCount} announcement source(s) enabled.`);
-
-      // Check individual settings
-      if (announcementConfig.binance.enabled) {
-        console.log("✓ Binance announcement monitoring enabled.");
-      } else {
-        console.log("ℹ️ Binance announcement monitoring is disabled.");
-      }
-
-      if (announcementConfig.okx.enabled) {
-        console.log("✓ OKX announcement monitoring enabled.");
-      } else {
-        console.log("ℹ️ OKX announcement monitoring is disabled.");
-      }
-    }
-
-    // Run initial check for listings and announcements
-    console.log("Running initial checks for new listings and announcements...");
-
-    if (issuesFound) {
-      console.log(
-        "⚠️ Some issues were found with the configuration. See warnings above."
-      );
-    }
-
-    // Check for announcements if at least one is enabled
-    if (announcementConfig.binance.enabled || announcementConfig.okx.enabled) {
-      await checkNewAnnouncements();
-    }
-
-    // Check for new exchange listings
-    await checkNewListings();
-
-    // Schedule periodic checks
-    console.log(
-      `Crypto listing monitor started. Checking every ${config.checkInterval} (cron format).`
-    );
-
-    // Log enabled exchanges
-    const enabledExchanges = Object.entries(config.exchanges)
-      .filter(([_, config]) => config.enabled)
-      .map(([name, _]) => name.toUpperCase());
-
-    console.log(
-      `Monitoring the following exchanges: ${enabledExchanges.join(", ")}`
-    );
-
-    // Log enabled announcement sources
-    const enabledAnnouncementSources = Object.entries(announcementConfig)
-      .filter(([_, config]) => config.enabled)
-      .map(([name, _]) => name.toUpperCase());
-
-    if (enabledAnnouncementSources.length > 0) {
-      console.log(
-        `Monitoring announcements from: ${enabledAnnouncementSources.join(
-          ", "
-        )}`
-      );
-    }
-
-    // Schedule regular checks using node-cron
-    cron.schedule(config.checkInterval, async () => {
-      try {
-        console.log("\n--- Running scheduled check ---");
-        await checkNewListings();
-        if (
-          announcementConfig.binance.enabled ||
-          announcementConfig.okx.enabled
-        ) {
-          await checkNewAnnouncements();
-        }
-      } catch (error) {
-        console.error("Error during scheduled check:", error);
-      }
-    });
-  } catch (error) {
-    console.error("Error initializing the application:", error);
-    process.exit(1);
-  }
-}
-
-// Start the application
-init();
