@@ -550,195 +550,280 @@ const binance = {
   async fetchAnnouncements() {
     try {
       console.log("Fetching Binance announcements...");
+      console.log(`Using URL: ${announcementConfig.binance.announcementUrl}`);
+
+      // Add timeout and headers to avoid blocking
       const response = await axios.get(
-        announcementConfig.binance.announcementUrl
+        announcementConfig.binance.announcementUrl,
+        {
+          timeout: 30000,
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            Connection: "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Cache-Control": "max-age=0",
+          },
+        }
       );
+
+      console.log(`Binance response status: ${response.status}`);
+
       const html = response.data;
+      // Log a small sample of the HTML to verify we're getting content
+      console.log(`HTML sample (first 200 chars): ${html.substring(0, 200)}`);
 
       const $ = cheerio.load(html);
       const announcements = [];
 
+      // Count elements to verify selectors are working
+      const totalElements = $(".bn-flex.w-full.flex-col.gap-4").length;
+      console.log(`Found ${totalElements} potential announcement elements`);
+
       // Find announcement elements using the correct selectors based on current page structure
       $(".bn-flex.w-full.flex-col.gap-4").each((i, element) => {
-        // Title is in an H3 with class typography-body1-1
-        const titleElement = $(element).find("h3.typography-body1-1");
-        const title = titleElement.text().trim();
+        try {
+          // Title is in an H3 with class typography-body1-1
+          const titleElement = $(element).find("h3.typography-body1-1");
+          const title = titleElement.text().trim();
 
-        // Check if it's a listing-related announcement
-        if (
-          title.match(/list|will add|new trading|launch|added|trading pair/i)
-        ) {
-          // URL is in an A tag parent of the title
-          const linkElement = $(element).find("a");
-          const url = linkElement.attr("href");
-          const fullUrl = url
-            ? url.startsWith("http")
-              ? url
-              : `https://www.binance.com${url}`
-            : "";
+          console.log(
+            `Processing element ${i + 1}/${totalElements}, title: ${title}`
+          );
 
-          // Extract date if available - usually in a div without children
-          let date = new Date().toISOString();
-          const dateText = $(element)
-            .find(".bn-flex.flex-col.gap-1 div:not(:has(*))")
-            .text()
-            .trim();
-          if (dateText) {
-            try {
-              // Check if the date has a year that seems like a future year (site formatting quirk)
-              const dateMatch = dateText.match(/(\d{4})-(\d{2})-(\d{2})/);
-              if (dateMatch) {
-                const year = parseInt(dateMatch[1]);
-                const currentYear = new Date().getFullYear();
-                // If the year is in the future, assume it's a typo and use current year
-                if (year > currentYear + 1) {
-                  const correctedDate = dateText.replace(year, currentYear);
-                  date = new Date(correctedDate).toISOString();
+          // Check if it's a listing-related announcement
+          if (
+            title.match(/list|will add|new trading|launch|added|trading pair/i)
+          ) {
+            console.log(`Found listing-related announcement: ${title}`);
+
+            // URL is in an A tag parent of the title
+            const linkElement = $(element).find("a");
+            const url = linkElement.attr("href");
+            const fullUrl = url
+              ? url.startsWith("http")
+                ? url
+                : `https://www.binance.com${url}`
+              : "";
+
+            if (!fullUrl) {
+              console.log(`Warning: No URL found for announcement: ${title}`);
+              return; // Skip this announcement
+            }
+
+            // Extract date if available - usually in a div without children
+            let date = new Date().toISOString();
+            const dateText = $(element)
+              .find(".bn-flex.flex-col.gap-1 div:not(:has(*))")
+              .text()
+              .trim();
+            if (dateText) {
+              try {
+                console.log(`Found date text: ${dateText}`);
+                // Check if the date has a year that seems like a future year (site formatting quirk)
+                const dateMatch = dateText.match(/(\d{4})-(\d{2})-(\d{2})/);
+                if (dateMatch) {
+                  const year = parseInt(dateMatch[1]);
+                  const currentYear = new Date().getFullYear();
+                  // If the year is in the future, assume it's a typo and use current year
+                  if (year > currentYear + 1) {
+                    const correctedDate = dateText.replace(year, currentYear);
+                    date = new Date(correctedDate).toISOString();
+                    console.log(
+                      `Corrected future date ${dateText} to ${correctedDate}`
+                    );
+                  } else {
+                    date = new Date(dateText).toISOString();
+                  }
                 } else {
                   date = new Date(dateText).toISOString();
                 }
-              } else {
-                date = new Date(dateText).toISOString();
+              } catch (e) {
+                // Keep default date
+                console.log(
+                  `Could not parse date: ${dateText}. Error: ${e.message}`
+                );
               }
-            } catch (e) {
-              // Keep default date
-              console.log(`Could not parse date: ${dateText}`);
+            } else {
+              console.log(`No date text found for announcement: ${title}`);
             }
-          }
 
-          // Extract potential coin symbols with improved filtering
-          const titleText = title.toUpperCase();
+            // Extract potential coin symbols with improved filtering
+            const titleText = title.toUpperCase();
 
-          // Look for symbols in parentheses - most reliable source
-          const symbolsInParentheses =
-            titleText.match(/\(([A-Z0-9]{2,10})\)/g) || [];
-          const extractedFromParentheses = symbolsInParentheses.map((s) =>
-            s.replace(/[()]/g, "")
-          );
-
-          // Look for specific formats like: "Will Add X", "Launch X", etc.
-          let extractedFromContext = [];
-
-          if (title.match(/will add|listing|adds|list/i)) {
-            const addMatch = title.match(
-              /will add|adds|listing|list\s+([A-Z0-9]{2,10})/i
+            // Look for symbols in parentheses - most reliable source
+            const symbolsInParentheses =
+              titleText.match(/\(([A-Z0-9]{2,10})\)/g) || [];
+            const extractedFromParentheses = symbolsInParentheses.map((s) =>
+              s.replace(/[()]/g, "")
             );
-            if (addMatch && addMatch[1]) {
-              extractedFromContext.push(addMatch[1].toUpperCase());
-            }
-          }
 
-          // Look for symbols that appear alongside the word "token" or "coin"
-          const tokenMatches =
-            titleText.match(
-              /([A-Z0-9]{2,10})\s+TOKEN|TOKEN\s+([A-Z0-9]{2,10})/g
-            ) || [];
-          tokenMatches.forEach((match) => {
-            const parts = match.split(/\s+/);
-            parts.forEach((part) => {
-              if (part !== "TOKEN" && /^[A-Z0-9]{2,10}$/.test(part)) {
-                extractedFromContext.push(part);
+            // Look for specific formats like: "Will Add X", "Launch X", etc.
+            let extractedFromContext = [];
+
+            if (title.match(/will add|listing|adds|list/i)) {
+              const addMatch = title.match(
+                /will add|adds|listing|list\s+([A-Z0-9]{2,10})/i
+              );
+              if (addMatch && addMatch[1]) {
+                extractedFromContext.push(addMatch[1].toUpperCase());
+              }
+            }
+
+            // Look for symbols that appear alongside the word "token" or "coin"
+            const tokenMatches =
+              titleText.match(
+                /([A-Z0-9]{2,10})\s+TOKEN|TOKEN\s+([A-Z0-9]{2,10})/g
+              ) || [];
+            tokenMatches.forEach((match) => {
+              const parts = match.split(/\s+/);
+              parts.forEach((part) => {
+                if (part !== "TOKEN" && /^[A-Z0-9]{2,10}$/.test(part)) {
+                  extractedFromContext.push(part);
+                }
+              });
+            });
+
+            // Look for patterns like BTCUSDT, ETHUSDT (typical trading pair format)
+            const tradingPairMatches =
+              titleText.match(/[A-Z0-9]{2,8}(USDT|BTC|ETH|BNB)/g) || [];
+            tradingPairMatches.forEach((pair) => {
+              const base = pair.replace(/(USDT|BTC|ETH|BNB)$/, "");
+              if (base.length >= 2 && base.length <= 8) {
+                extractedFromContext.push(base);
               }
             });
-          });
 
-          // Look for patterns like BTCUSDT, ETHUSDT (typical trading pair format)
-          const tradingPairMatches =
-            titleText.match(/[A-Z0-9]{2,8}(USDT|BTC|ETH|BNB)/g) || [];
-          tradingPairMatches.forEach((pair) => {
-            const base = pair.replace(/(USDT|BTC|ETH|BNB)$/, "");
-            if (base.length >= 2 && base.length <= 8) {
-              extractedFromContext.push(base);
+            // General token symbols - with extensive filtering to remove common words
+            const generalSymbolMatches =
+              titleText.match(/\b[A-Z0-9]{2,8}\b/g) || [];
+
+            // Combine all sources with priority to more reliable sources
+            const allSymbols = [
+              ...extractedFromParentheses,
+              ...extractedFromContext,
+              ...generalSymbolMatches,
+            ];
+
+            // More extensive filtering of common words and false positives
+            const commonWords = [
+              "BINANCE",
+              "NEW",
+              "ADD",
+              "ADDS",
+              "WILL",
+              "THE",
+              "FOR",
+              "AND",
+              "WITH",
+              "USDⓈ",
+              "USD",
+              "USDT",
+              "USDC",
+              "BUSD",
+              "EUR",
+              "GBP",
+              "JPY",
+              "BTC",
+              "ETH",
+              "BNB",
+              "SPOT",
+              "MARGIN",
+              "FUTURES",
+              "EARN",
+              "TRADING",
+              "PAIRS",
+              "PAIR",
+              "ZERO",
+              "FEE",
+              "FEES",
+              "BUY",
+              "SELL",
+              "CONVERT",
+              "LAUNCH",
+              "LIST",
+              "NOTICE",
+              "CAP",
+              "PRE",
+              "MARKET",
+              "SERVICES",
+              "BOTS",
+              "COPY",
+              "TOKEN",
+              "TOKENS",
+              "CRYPTO",
+            ];
+
+            // Keep only unique symbols after filtering
+            const symbols = [...new Set(allSymbols)].filter(
+              (s) =>
+                !commonWords.includes(s) &&
+                s.length >= 2 &&
+                s.length <= 8 &&
+                !/^\d+$/.test(s) // Filter out numbers-only strings
+            );
+
+            console.log(`Extracted symbols: ${symbols.join(", ")}`);
+
+            if (fullUrl && symbols.length > 0) {
+              console.log(`Adding Binance announcement: ${title}`);
+              announcements.push({
+                title,
+                url: fullUrl,
+                date,
+                symbols,
+                exchange: "binance",
+                source: "announcement",
+              });
+            } else {
+              console.log(
+                `Skipping announcement (no URL or no symbols): ${title}`
+              );
             }
-          });
-
-          // General token symbols - with extensive filtering to remove common words
-          const generalSymbolMatches =
-            titleText.match(/\b[A-Z0-9]{2,8}\b/g) || [];
-
-          // Combine all sources with priority to more reliable sources
-          const allSymbols = [
-            ...extractedFromParentheses,
-            ...extractedFromContext,
-            ...generalSymbolMatches,
-          ];
-
-          // More extensive filtering of common words and false positives
-          const commonWords = [
-            "BINANCE",
-            "NEW",
-            "ADD",
-            "ADDS",
-            "WILL",
-            "THE",
-            "FOR",
-            "AND",
-            "WITH",
-            "USDⓈ",
-            "USD",
-            "USDT",
-            "USDC",
-            "BUSD",
-            "EUR",
-            "GBP",
-            "JPY",
-            "BTC",
-            "ETH",
-            "BNB",
-            "SPOT",
-            "MARGIN",
-            "FUTURES",
-            "EARN",
-            "TRADING",
-            "PAIRS",
-            "PAIR",
-            "ZERO",
-            "FEE",
-            "FEES",
-            "BUY",
-            "SELL",
-            "CONVERT",
-            "LAUNCH",
-            "LIST",
-            "NOTICE",
-            "CAP",
-            "PRE",
-            "MARKET",
-            "SERVICES",
-            "BOTS",
-            "COPY",
-            "TOKEN",
-            "TOKENS",
-            "CRYPTO",
-          ];
-
-          // Keep only unique symbols after filtering
-          const symbols = [...new Set(allSymbols)].filter(
-            (s) =>
-              !commonWords.includes(s) &&
-              s.length >= 2 &&
-              s.length <= 8 &&
-              !/^\d+$/.test(s) // Filter out numbers-only strings
-          );
-
-          if (fullUrl && symbols.length > 0) {
-            console.log(`Found Binance announcement: ${title}`);
-            announcements.push({
-              title,
-              url: fullUrl,
-              date,
-              symbols,
-              exchange: "binance",
-              source: "announcement",
-            });
           }
+        } catch (elementError) {
+          console.error(`Error processing element ${i}:`, elementError);
         }
       });
 
       console.log(`Total Binance announcements found: ${announcements.length}`);
+
+      // Debug info - write to file if in development
+      if (
+        process.env.NODE_ENV === "development" ||
+        announcements.length === 0
+      ) {
+        try {
+          const debugInfo = {
+            timestamp: new Date().toISOString(),
+            totalElements,
+            announcements,
+          };
+          // Write debug info to file
+          const fs = require("fs");
+          fs.writeFileSync(
+            "binance-debug.json",
+            JSON.stringify(debugInfo, null, 2)
+          );
+          console.log("Debug info written to binance-debug.json");
+        } catch (debugError) {
+          console.error("Error writing debug info:", debugError);
+        }
+      }
+
       return { announcements };
     } catch (error) {
-      console.error("Error fetching Binance announcements:", error);
+      console.error("Error fetching Binance announcements:", error.message);
+      if (error.response) {
+        console.error("Response status:", error.response.status);
+        console.error(
+          "Response headers:",
+          JSON.stringify(error.response.headers)
+        );
+      }
       return { announcements: [] };
     }
   },
@@ -751,13 +836,31 @@ const okx = {
   async fetchAnnouncements() {
     try {
       console.log("Fetching OKX announcements...");
-      const response = await axios.get(announcementConfig.okx.announcementUrl);
-      const html = response.data;
+      console.log(`Using URL: ${announcementConfig.okx.announcementUrl}`);
 
+      // Add timeout and headers to prevent blocking
+      const response = await axios.get(announcementConfig.okx.announcementUrl, {
+        timeout: 30000,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.5",
+          Connection: "keep-alive",
+          "Upgrade-Insecure-Requests": "1",
+          "Cache-Control": "max-age=0",
+        },
+      });
+
+      console.log(`OKX response status: ${response.status}`);
+
+      const html = response.data;
       const $ = cheerio.load(html);
       const announcements = [];
 
       // Find announcement elements on the new listings page
+      let count = 0;
       $("a").each((i, element) => {
         const title = $(element).text().trim();
         const url = $(element).attr("href");
@@ -771,6 +874,9 @@ const okx = {
             title.match(/perpetual/i) ||
             title.match(/listing/i))
         ) {
+          count++;
+          console.log(`Found OKX announcement #${count}: ${title}`);
+
           const fullUrl = url.startsWith("http")
             ? url
             : `https://www.okx.com${url}`;
@@ -779,60 +885,162 @@ const okx = {
           let date = new Date().toISOString();
           const parent = $(element).parent();
           const siblings = parent.siblings();
+          let dateFound = false;
 
           // Look for a sibling element with date information
           siblings.each((j, sibling) => {
             const siblingText = $(sibling).text().trim();
             if (siblingText.includes("Published on")) {
               try {
+                console.log(`Found date text: ${siblingText}`);
                 const dateText = siblingText.replace("Published on", "").trim();
-                date = new Date(dateText).toISOString();
+
+                // Check if there's a future year issue
+                const dateMatch = dateText.match(
+                  /([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})/
+                );
+                if (dateMatch) {
+                  const year = parseInt(dateMatch[3]);
+                  const currentYear = new Date().getFullYear();
+
+                  // If the year is in the future by more than one year, assume it's a formatting issue
+                  if (year > currentYear + 1) {
+                    const correctedDateText = dateText.replace(
+                      year,
+                      currentYear
+                    );
+                    console.log(
+                      `Correcting future date ${dateText} to ${correctedDateText}`
+                    );
+                    date = new Date(correctedDateText).toISOString();
+                  } else {
+                    date = new Date(dateText).toISOString();
+                  }
+                } else {
+                  date = new Date(dateText).toISOString();
+                }
+                dateFound = true;
               } catch (e) {
+                console.log(`Error parsing date: ${e.message}`);
                 // Keep default date
               }
             }
           });
 
-          // Extract potential coin symbols
+          if (!dateFound) {
+            console.log(`No date found for: ${title}, using current date`);
+          }
+
+          // Extract potential coin symbols with improved filtering
           const titleText = title.toUpperCase();
 
-          // Look for symbols in parentheses
-          const symbolsInParentheses =
-            titleText.match(/\(([A-Z0-9]+)\)/g) || [];
-          const extractedFromParentheses = symbolsInParentheses.map((s) =>
-            s.replace(/[()]/g, "")
+          // Extract main coins with targeted approaches
+          let mainCoins = [];
+
+          // Method 1: Extract from "OKX to list X" pattern
+          if (titleText.includes("OKX TO LIST")) {
+            const listMatch = titleText.match(/OKX TO LIST ([A-Z0-9]{2,10})\s/);
+            if (listMatch && listMatch[1]) {
+              mainCoins.push(listMatch[1]);
+            }
+          }
+
+          // Method 2: Extract from "OKX to list X (Full Name)" pattern
+          const parenthesesSymbols =
+            titleText.match(/\(([A-Z0-9]{2,10})\)/g) || [];
+          mainCoins.push(
+            ...parenthesesSymbols.map((s) => s.replace(/[()]/g, ""))
           );
 
-          // Look for tokens mentioned directly
-          const generalSymbolMatches =
-            titleText.match(/\b[A-Z0-9]{2,10}\b/g) || [];
+          // Method 3: Extract from paired words - X Network, X Protocol, etc.
+          const pairedSymbols =
+            titleText.match(
+              /([A-Z0-9]{2,10})\s+(NETWORK|PROTOCOL|CHAIN|TOKEN)/g
+            ) || [];
+          pairedSymbols.forEach((match) => {
+            const parts = match.split(/\s+/);
+            if (parts[0] && parts[0].length >= 2 && parts[0].length <= 10) {
+              mainCoins.push(parts[0]);
+            }
+          });
 
-          // Combine and filter symbols
-          const allSymbols = [
-            ...extractedFromParentheses,
-            ...generalSymbolMatches,
+          // Method 4: Look for trading pairs like XUSDT
+          const tradingPairs =
+            titleText.match(/([A-Z0-9]{2,8})(USDT|BTC|ETH|USD)/g) || [];
+          tradingPairs.forEach((pair) => {
+            const base = pair.replace(/(USDT|BTC|ETH|USD)$/, "");
+            if (base.length >= 2 && base.length <= 8) {
+              mainCoins.push(base);
+            }
+          });
+
+          // Backup method: Extract all potential symbols
+          const generalSymbols = titleText.match(/\b[A-Z0-9]{2,8}\b/g) || [];
+
+          // Filter common words and non-tokens
+          const commonWords = [
+            "OKX",
+            "NEW",
+            "AND",
+            "FOR",
+            "THE",
+            "WILL",
+            "LIST",
+            "TO",
+            "ADD",
+            "SPOT",
+            "TRADING",
+            "MARGIN",
+            "FUTURES",
+            "WITH",
+            "ALONG",
+            "ITS",
+            "SIMPLE",
+            "EARN",
+            "CRYPTO",
+            "PERPETUAL",
+            "PUBLISH",
+            "ON",
+            "FEB",
+            "JAN",
+            "MAR",
+            "APR",
+            "MAY",
+            "JUN",
+            "JUL",
+            "AUG",
+            "SEP",
+            "OCT",
+            "NOV",
+            "DEC",
+            "PUBLISHED",
+            "USD",
+            "USDT",
+            "BTC",
+            "ETH",
           ];
-          const symbols = allSymbols.filter(
-            (s) =>
-              ![
-                "OKX",
-                "NEW",
-                "USD",
-                "USDT",
-                "USDC",
-                "EUR",
-                "GBP",
-                "THE",
-                "FOR",
-                "AND",
-                "WILL",
-                "LIST",
-                "SPOT",
-                "TRADING",
-              ].includes(s)
-          );
+
+          // When no main coins found, use general symbols with filtering
+          let symbols =
+            mainCoins.length > 0
+              ? [...new Set(mainCoins)]
+              : [...new Set(generalSymbols)].filter(
+                  (s) =>
+                    !commonWords.includes(s) &&
+                    s.length >= 2 &&
+                    s.length <= 8 &&
+                    !/^\d+$/.test(s) // Filter out numbers-only
+                );
+
+          console.log(`Extracted symbols: ${symbols.join(", ") || "none"}`);
+
+          // Final filter to remove any residual noise
+          symbols = symbols.filter((s) => !commonWords.includes(s));
 
           if (symbols.length > 0) {
+            console.log(
+              `Adding announcement with symbols: ${symbols.join(", ")}`
+            );
             announcements.push({
               title,
               url: fullUrl,
@@ -841,13 +1049,23 @@ const okx = {
               exchange: "okx",
               source: "announcement",
             });
+          } else {
+            console.log(`Skipping announcement (no symbols found): ${title}`);
           }
         }
       });
 
+      console.log(`Total OKX announcements found: ${announcements.length}`);
       return { announcements };
     } catch (error) {
-      console.error("Error fetching OKX announcements:", error);
+      console.error("Error fetching OKX announcements:", error.message);
+      if (error.response) {
+        console.error("Response status:", error.response.status);
+        console.error(
+          "Response headers:",
+          JSON.stringify(error.response.headers)
+        );
+      }
       return { announcements: [] };
     }
   },
@@ -1064,27 +1282,69 @@ URL: ${announcement.url}
   }
 }
 
-// Initialize and start the monitor
+// Modify the init function to better check configuration
 async function init() {
   try {
-    // Ensure data directory exists
+    console.log("Starting cryptocurrency listing monitor...");
+
     await ensureDataDirExists();
 
-    // Test email functionality if applicable
-    if (config.email.enabled && config.testOnStartup) {
+    // Test email setup if enabled
+    if (config.email.testOnStartup && config.email.enabled) {
       await testEmailSetup();
     }
 
-    // Run initial check
-    console.log("Running initial checks for new listings and announcements...");
-    await checkNewListings();
-    await checkNewAnnouncements();
+    // Verify exchange settings
+    console.log("Checking configuration...");
+    let issuesFound = false;
 
-    // Schedule recurring checks
-    cron.schedule(config.checkInterval, async () => {
-      await checkNewListings();
+    // Check announcement settings
+    if (
+      !announcementConfig.binance.enabled &&
+      !announcementConfig.okx.enabled
+    ) {
+      console.warn(
+        "⚠️ Warning: Both Binance and OKX announcement monitoring are disabled. Set ENABLE_BINANCE_ANNOUNCEMENTS=true and/or ENABLE_OKX_ANNOUNCEMENTS=true in the .env.local file to enable them."
+      );
+      issuesFound = true;
+    } else {
+      const enabledCount =
+        (announcementConfig.binance.enabled ? 1 : 0) +
+        (announcementConfig.okx.enabled ? 1 : 0);
+      console.log(`✓ ${enabledCount} announcement source(s) enabled.`);
+
+      // Check individual settings
+      if (announcementConfig.binance.enabled) {
+        console.log("✓ Binance announcement monitoring enabled.");
+      } else {
+        console.log("ℹ️ Binance announcement monitoring is disabled.");
+      }
+
+      if (announcementConfig.okx.enabled) {
+        console.log("✓ OKX announcement monitoring enabled.");
+      } else {
+        console.log("ℹ️ OKX announcement monitoring is disabled.");
+      }
+    }
+
+    // Run initial check for listings and announcements
+    console.log("Running initial checks for new listings and announcements...");
+
+    if (issuesFound) {
+      console.log(
+        "⚠️ Some issues were found with the configuration. See warnings above."
+      );
+    }
+
+    // Check for announcements if at least one is enabled
+    if (announcementConfig.binance.enabled || announcementConfig.okx.enabled) {
       await checkNewAnnouncements();
-    });
+    }
+
+    // Check for new exchange listings
+    await checkNewListings();
+
+    // Schedule periodic checks
     console.log(
       `Crypto listing monitor started. Checking every ${config.checkInterval} (cron format).`
     );
@@ -1110,6 +1370,22 @@ async function init() {
         )}`
       );
     }
+
+    // Schedule regular checks using node-cron
+    cron.schedule(config.checkInterval, async () => {
+      try {
+        console.log("\n--- Running scheduled check ---");
+        await checkNewListings();
+        if (
+          announcementConfig.binance.enabled ||
+          announcementConfig.okx.enabled
+        ) {
+          await checkNewAnnouncements();
+        }
+      } catch (error) {
+        console.error("Error during scheduled check:", error);
+      }
+    });
   } catch (error) {
     console.error("Error initializing the application:", error);
     process.exit(1);
