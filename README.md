@@ -1,87 +1,105 @@
-# Multi-Exchange Crypto Tracker
+# Crypto Listing Monitor
 
-A Node.js application that monitors multiple cryptocurrency exchanges for new token listings and sends email notifications when new listings are detected.
+A tool to monitor cryptocurrency exchanges for new coin listings and announcements, sending email notifications when new listings are detected.
 
 ## Features
 
-- **Multi-Exchange Support**: Monitor new listings across Binance, Coinbase, Kraken, OKX, Bybit, Crypto.com, KuCoin, Gate.io, MEXC, Bitget and more
-- **Real-time Notifications**: Receive email alerts when new cryptocurrencies are listed
-- **Modular Design**: Easy to add support for additional exchanges
-- **Containerized**: Runs in Docker for easy deployment
-
-## Setup
-
-### Environment Variables
-
-Create a `.env.local` file with the following variables:
-
-```
-SENDGRID_API_KEY="your_sendgrid_api_key"
-
-# Exchange settings (true to enable, false to disable)
-ENABLE_BINANCE=true
-ENABLE_COINBASE=true
-ENABLE_KRAKEN=true
-ENABLE_OKX=true
-ENABLE_BYBIT=true
-ENABLE_CRYPTOCOM=true
-ENABLE_KUCOIN=true
-ENABLE_GATEIO=true
-ENABLE_MEXC=true
-ENABLE_BITGET=true
-```
-
-### Installation
-
-1. Clone the repository
-2. Install dependencies:
-   ```
-   npm install
-   ```
-3. Run the application:
-   ```
-   node index.js
-   ```
-
-### Using Docker
-
-Build and run the Docker container:
-
-```
-docker build -t crypto-tracker .
-docker run -d --name crypto-tracker --restart unless-stopped crypto-tracker
-```
+- **Real-time API Monitoring**: Checks exchange APIs for newly listed trading pairs
+- **Announcement Page Monitoring**: Scrapes exchange announcement pages to detect upcoming listings before they appear in the API
+- **Early Detection**: Get notifications about new coins before they're actually listed and potentially before significant price movements
+- **Multiple Exchange Support**: Monitors major exchanges including Binance, Coinbase, Kraken, OKX, Bybit, Kucoin, Gate.io, and MEXC
+- **Email Notifications**: Receive detailed notifications via email about new listings and announcements
 
 ## How It Works
 
-- The application periodically polls the API endpoints of various cryptocurrency exchanges
-- It compares the current listings with previously stored listings to detect new additions
-- When new listings are found, it sends an email notification with details about the newly listed cryptocurrencies
-- Data is stored locally in JSON files within the `data` directory
+The application has two main monitoring systems:
 
-## Supported Exchanges
+1. **API Monitoring**
 
-- **Binance**: https://api.binance.com/api/v3/exchangeInfo
-- **Coinbase**: https://api.exchange.coinbase.com/products
-- **Kraken**: https://api.kraken.com/0/public/AssetPairs
-- **OKX**: https://www.okx.com/api/v5/public/instruments?instType=SPOT
-- **Bybit**: https://api.bybit.com/v5/market/instruments-info?category=spot
-- **Crypto.com**: https://api.crypto.com/exchange/v1/public/get-instruments
-- **KuCoin**: https://api.kucoin.com/api/v1/symbols
-- **Gate.io**: https://api.gateio.ws/api/v4/spot/currency_pairs
-- **MEXC**: https://api.mexc.com/api/v3/exchangeInfo
-- **Bitget**: https://api.bitget.com/api/spot/v1/public/symbols
+   - Fetches data from exchange APIs to find newly listed trading pairs
+   - Compares with previously stored data to detect new listings
+   - Sends notifications when new coins appear in the API
 
-## Adding New Exchanges
+2. **Announcement Monitoring**
+   - Scrapes exchange announcement pages to find posts about upcoming listings
+   - Uses pattern matching to find announcements with keywords like "Will List", "Listing", etc.
+   - Extracts potential coin symbols from announcements
+   - Sends notifications about new listing announcements before they appear in the API
 
-To add support for a new exchange:
+## Getting Started
 
-1. Add a new entry to the `config.exchanges` object in `index.js`
-2. Create a new adapter in the `exchangeAdapters` object
-3. Implement the required methods:
-   - `fetchListings()`: Fetch and normalize data from the exchange API
-   - `getDataFilePath()`: Return the path for storing exchange data
+### Prerequisites
+
+- Node.js (14.x or higher)
+- NPM or Yarn
+
+### Installation
+
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/yourusername/crypto-listing-monitor.git
+   cd crypto-listing-monitor
+   ```
+
+2. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+3. Create a `.env` file with your configuration:
+
+   ```
+   # Email configuration
+   EMAIL_ENABLED=true
+   EMAIL_FROM=your-email@gmail.com
+   EMAIL_TO=recipient@example.com
+   SENDGRID_API_KEY=your_sendgrid_api_key
+   # Or for Gmail
+   APP_PASSWORD=your_gmail_app_password
+
+   # Exchange API monitoring
+   ENABLE_BINANCE=true
+   ENABLE_COINBASE=true
+   ENABLE_KRAKEN=true
+   ENABLE_OKX=true
+   ENABLE_BYBIT=true
+   ENABLE_KUCOIN=true
+   ENABLE_GATEIO=true
+   ENABLE_MEXC=true
+
+   # Announcement monitoring
+   ENABLE_BINANCE_ANNOUNCEMENTS=true
+   ENABLE_COINBASE_ANNOUNCEMENTS=true
+   ENABLE_KRAKEN_ANNOUNCEMENTS=true
+   ENABLE_OKX_ANNOUNCEMENTS=true
+   ENABLE_BYBIT_ANNOUNCEMENTS=true
+   ENABLE_KUCOIN_ANNOUNCEMENTS=true
+   ENABLE_GATEIO_ANNOUNCEMENTS=true
+   ```
+
+4. Run the application:
+   ```bash
+   npm start
+   ```
+
+## Why Use Announcement Monitoring?
+
+Exchanges typically announce new listings before they actually appear in their API. By monitoring announcement pages, you can:
+
+1. **Get Earlier Notifications**: Be notified as soon as an exchange announces a new listing, often days before it's actually listed
+2. **Beat Market Reaction**: Potentially act before the majority of traders who wait for the listing to appear
+3. **Make More Informed Decisions**: Access the full announcement with details about the listing process and timeline
+
+## Customization
+
+You can customize the check frequency by modifying the `CHECK_INTERVAL` environment variable using cron syntax.
 
 ## License
 
-ISC
+MIT
+
+## Disclaimer
+
+This tool is for informational purposes only and should not be considered financial advice. Cryptocurrency investments are volatile and risky. Always do your own research before investing.
