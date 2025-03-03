@@ -566,6 +566,7 @@ const announcementConfig = {
 // Exchange announcement implementations - only keep Binance and OKX
 const binance = {
   async fetchAnnouncements() {
+    let browser = null;
     try {
       console.log("Fetching Binance announcements using Playwright...");
       console.log(`Using URL: ${announcementConfig.binance.announcementUrl}`);
@@ -573,11 +574,27 @@ const binance = {
       // Import Playwright - do this dynamically to avoid loading it unless needed
       const { chromium } = require("playwright");
 
-      // Launch a headless browser
-      const browser = await chromium.launch({
+      console.log("Launching Playwright browser with debug info...");
+
+      // Log the current directory and environment
+      console.log(`Current directory: ${process.cwd()}`);
+      console.log(`NODE_ENV: ${process.env.NODE_ENV}`);
+
+      // Launch a headless browser with detailed debugging
+      browser = await chromium.launch({
         headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+        ],
+        logger: {
+          isEnabled: (name, severity) => true,
+          log: (name, severity, message, args) =>
+            console.log(`[Playwright ${severity}] ${name}: ${message}`),
+        },
       });
-      console.log("Launched Playwright browser");
+      console.log("Successfully launched Playwright browser");
 
       // Create a new context and page
       const context = await browser.newContext({
@@ -585,7 +602,10 @@ const binance = {
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         viewport: { width: 1280, height: 800 },
       });
+      console.log("Created browser context");
+
       const page = await context.newPage();
+      console.log("Created new page");
 
       // Navigate to the Binance announcements page
       console.log("Navigating to Binance announcements page...");
@@ -604,11 +624,21 @@ const binance = {
           )
         );
 
-      // Take a screenshot for debugging in development
-      if (process.env.NODE_ENV !== "production") {
-        await page.screenshot({ path: "binance-debug.png", fullPage: true });
-        console.log("Saved debug screenshot to binance-debug.png");
+      // Take a screenshot for debugging in all environments
+      try {
+        const screenshotPath = "/app/data/binance-debug.png";
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        console.log(`Saved debug screenshot to ${screenshotPath}`);
+      } catch (screenshotError) {
+        console.error("Failed to save screenshot:", screenshotError);
       }
+
+      // Get page HTML for debugging
+      const pageContent = await page.content();
+      console.log(`Page HTML content length: ${pageContent.length} characters`);
+      console.log(
+        `First 500 chars of page content: ${pageContent.substring(0, 500)}`
+      );
 
       // Extract announcement data from the page
       console.log(
@@ -616,6 +646,13 @@ const binance = {
       );
       const announcements = await page.evaluate(() => {
         const results = [];
+
+        // Function to log counts directly to console (visible in Node.js)
+        function logElementCount(selector, name) {
+          const elements = document.querySelectorAll(selector);
+          console.log(`Found ${elements.length} ${name} elements`);
+          return elements;
+        }
 
         // Function to extract symbols from title
         const extractSymbols = (text) => {
@@ -639,14 +676,15 @@ const binance = {
         };
 
         // Method 1: Target the specific structure seen in the screenshot
-        // Look for typography headline elements
-        const headlines = document.querySelectorAll(
-          'h2.typography-headline5, h2[class*="typography"], .typography-headline5'
+        // Log all the selectors we're trying to find
+        const headlines = logElementCount(
+          'h2.typography-headline5, h2[class*="typography"], .typography-headline5',
+          "headline"
         );
-        console.log(`Found ${headlines.length} headline elements`);
 
         headlines.forEach((headline) => {
           const text = headline.textContent.trim();
+          console.log(`Found headline text: "${text}"`);
           if (text && text.includes("Listing")) {
             // Found a listing headline, now find the actual announcements
             const parentSection = headline.closest(".bn-flex");
@@ -694,10 +732,10 @@ const binance = {
         });
 
         // Method 2: Target the specific bn-flex structure
-        const flexItems = document.querySelectorAll(
-          ".bn-flex.flex-col.gap-6, .bn-flex.flex-col.gap-4"
+        const flexItems = logElementCount(
+          ".bn-flex.flex-col.gap-6, .bn-flex.flex-col.gap-4",
+          "flex container"
         );
-        console.log(`Found ${flexItems.length} flex container elements`);
 
         flexItems.forEach((container) => {
           // Look for links within these containers
@@ -747,11 +785,9 @@ const binance = {
         });
 
         // Method 3: Direct targeting of announcement items based on the screenshot
-        const announcementItems = document.querySelectorAll(
-          'a[href*="/support/announcement/detail/"]'
-        );
-        console.log(
-          `Found ${announcementItems.length} direct announcement links`
+        const announcementItems = logElementCount(
+          'a[href*="/support/announcement/detail/"]',
+          "direct announcement links"
         );
 
         announcementItems.forEach((item) => {
@@ -780,8 +816,9 @@ const binance = {
         });
 
         // Method 4: Look for date elements and their parent containers
-        const dateElements = document.querySelectorAll(
-          '.typography-caption1, [class*="typography"][class*="body"]'
+        const dateElements = logElementCount(
+          '.typography-caption1, [class*="typography"][class*="body"]',
+          "date element"
         );
         dateElements.forEach((dateEl) => {
           // Check if this looks like a date
@@ -825,6 +862,10 @@ const binance = {
           }
         });
 
+        // Log the final results
+        console.log(
+          `Total results found in browser context: ${results.length}`
+        );
         return results;
       });
 
@@ -851,12 +892,13 @@ const binance = {
         "Error fetching Binance announcements with Playwright:",
         error
       );
+      console.error("Stack trace:", error.stack);
 
       // Try to ensure browser is closed in case of error
       try {
         if (browser) await browser.close();
       } catch (e) {
-        // Ignore browser close errors
+        console.error("Error closing browser:", e);
       }
 
       return [];
