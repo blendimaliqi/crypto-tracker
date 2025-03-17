@@ -55,8 +55,11 @@ RUN find /app/.playwright-browsers -type f -executable | grep -v ".so" | xargs -
 # Copy application code
 COPY . .
 
+# Build TypeScript code
+RUN npm run build
+
 # Add startup script to ensure environment is properly configured
-RUN echo '#!/bin/bash\necho "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH"\necho "Listing browser files:"\nfind /app/.playwright-browsers -type f -executable -not -path "*/\.*" | head -10\nexec node index.js' > /app/startup.sh
+RUN echo '#!/bin/bash\necho "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH"\necho "Listing browser files:"\nfind /app/.playwright-browsers -type f -executable -not -path "*/\.*" | head -10\nexec node dist/index.js' > /app/startup.sh
 RUN chmod +x /app/startup.sh
 
 # Set environment variable for Node.js to report uncaught exceptions

@@ -19,3 +19,5 @@ data/
 # Debug files
 binance-debug.png
 *-debug.png
+
+dist/
