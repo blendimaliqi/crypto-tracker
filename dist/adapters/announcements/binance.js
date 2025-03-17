@@ -88,9 +88,6 @@ const binanceAdapter = {
                 });
             });
             await page.waitForTimeout(2000);
-            // Take a screenshot for debugging
-            await page.screenshot({ path: "binance-debug.png" });
-            console.log("Saved screenshot to binance-debug.png");
             // Check for human verification
             const pageContent = await page.content();
             if (pageContent.includes("Human Verification") ||
