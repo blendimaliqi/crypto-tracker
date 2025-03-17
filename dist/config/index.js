@@ -37,6 +37,35 @@ const path = __importStar(require("path"));
 const dotenv = __importStar(require("dotenv"));
 // Load environment variables from .env.local file
 dotenv.config({ path: ".env.local" });
+// Helper function to check all possible environment variable formats
+function getBooleanEnv(keys) {
+    for (const key of keys) {
+        if (process.env[key] === "true") {
+            return true;
+        }
+    }
+    return false;
+}
+// Determine enabled exchanges for announcements
+const determineEnabledAnnouncementExchanges = () => {
+    // First check for the explicit ANNOUNCEMENT_EXCHANGES variable
+    if (process.env.ANNOUNCEMENT_EXCHANGES) {
+        return process.env.ANNOUNCEMENT_EXCHANGES.split(",");
+    }
+    // Otherwise build the list from individual exchange settings
+    const exchanges = [];
+    if (getBooleanEnv([
+        "BINANCE_ANNOUNCEMENTS_ENABLED",
+        "ENABLE_BINANCE_ANNOUNCEMENTS",
+    ])) {
+        exchanges.push("binance");
+    }
+    if (getBooleanEnv(["OKX_ANNOUNCEMENTS_ENABLED", "ENABLE_OKX_ANNOUNCEMENTS"])) {
+        exchanges.push("okx");
+    }
+    // Add others as needed
+    return exchanges.length > 0 ? exchanges : ["binance", "okx"];
+};
 // Create the configuration object
 const config = {
     dataPath: path.resolve(__dirname, "../../data"),
@@ -66,56 +95,69 @@ const config = {
         binance: {
             apiUrl: "https://api.binance.com/api/v3/exchangeInfo",
             dataFile: "binance_listings.json",
-            enabled: process.env.BINANCE_ENABLED === "true",
+            enabled: getBooleanEnv(["BINANCE_ENABLED", "ENABLE_BINANCE"]),
         },
         coinbase: {
             apiUrl: "https://api.exchange.coinbase.com/products",
             dataFile: "coinbase_listings.json",
-            enabled: process.env.COINBASE_ENABLED === "true",
+            enabled: getBooleanEnv(["COINBASE_ENABLED", "ENABLE_COINBASE"]),
         },
         kraken: {
             apiUrl: "https://api.kraken.com/0/public/AssetPairs",
             dataFile: "kraken_listings.json",
-            enabled: process.env.KRAKEN_ENABLED === "true",
+            enabled: getBooleanEnv(["KRAKEN_ENABLED", "ENABLE_KRAKEN"]),
         },
         okx: {
             apiUrl: "https://www.okx.com/api/v5/public/instruments?instType=SPOT",
             dataFile: "okx_listings.json",
-            enabled: process.env.OKX_ENABLED === "true",
+            enabled: getBooleanEnv(["OKX_ENABLED", "ENABLE_OKX"]),
         },
         bybit: {
             apiUrl: "https://api.bybit.com/v5/market/instruments-info?category=spot",
             dataFile: "bybit_listings.json",
-            enabled: process.env.BYBIT_ENABLED === "true",
+            enabled: getBooleanEnv(["BYBIT_ENABLED", "ENABLE_BYBIT"]),
         },
         kucoin: {
             apiUrl: "https://api.kucoin.com/api/v1/symbols",
             dataFile: "kucoin_listings.json",
-            enabled: process.env.KUCOIN_ENABLED === "true",
+            enabled: getBooleanEnv(["KUCOIN_ENABLED", "ENABLE_KUCOIN"]),
         },
         gateio: {
             apiUrl: "https://api.gateio.ws/api/v4/spot/currency_pairs",
             dataFile: "gateio_listings.json",
-            enabled: process.env.GATEIO_ENABLED === "true",
+            enabled: getBooleanEnv(["GATEIO_ENABLED", "ENABLE_GATEIO"]),
         },
         mexc: {
             apiUrl: "https://api.mexc.com/api/v3/exchangeInfo",
             dataFile: "mexc_listings.json",
-            enabled: process.env.MEXC_ENABLED === "true",
+            enabled: getBooleanEnv(["MEXC_ENABLED", "ENABLE_MEXC"]),
         },
     },
     // Announcement configuration
     announcements: {
         dataFile: path.resolve(__dirname, "../../data/announcements.json"),
-        enabledExchanges: (process.env.ANNOUNCEMENT_EXCHANGES || "binance,okx").split(","),
+        enabledExchanges: determineEnabledAnnouncementExchanges(),
         binance: {
             url: "https://www.binance.com/en/support/announcement/new-cryptocurrency-listing",
-            enabled: process.env.BINANCE_ANNOUNCEMENTS_ENABLED === "true",
+            enabled: getBooleanEnv([
+                "BINANCE_ANNOUNCEMENTS_ENABLED",
+                "ENABLE_BINANCE_ANNOUNCEMENTS",
+            ]),
         },
         okx: {
             url: "https://www.okx.com/support/hc/en-us/sections/360000030652-Latest-Announcements",
-            enabled: process.env.OKX_ANNOUNCEMENTS_ENABLED === "true",
+            enabled: getBooleanEnv([
+                "OKX_ANNOUNCEMENTS_ENABLED",
+                "ENABLE_OKX_ANNOUNCEMENTS",
+            ]),
         },
     },
 };
+// Log config details for debugging
+console.log("Config loaded with the following settings:");
+console.log(`- Binance enabled: ${config.exchanges.binance.enabled}`);
+console.log(`- OKX enabled: ${config.exchanges.okx.enabled}`);
+console.log(`- Binance announcements enabled: ${config.announcements.binance.enabled}`);
+console.log(`- OKX announcements enabled: ${config.announcements.okx.enabled}`);
+console.log(`- Enabled announcement exchanges: ${config.announcements.enabledExchanges.join(", ")}`);
 exports.default = config;

@@ -1,0 +1,55 @@
+version: "3.8"
+
+services:
+  crypto-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      # Exchange settings
+      - ENABLE_BINANCE=true
+      - ENABLE_OKX=true
+      - ENABLE_COINBASE=true
+      - ENABLE_KRAKEN=true
+      - ENABLE_BYBIT=true
+      - ENABLE_KUCOIN=true
+      - ENABLE_GATEIO=true
+      - ENABLE_MEXC=true
+
+      # Announcement settings
+      - ENABLE_BINANCE_ANNOUNCEMENTS=true
+      - ENABLE_OKX_ANNOUNCEMENTS=true
+
+      # Email settings (these are required)
+      - EMAIL_ENABLED=true
+      - EMAIL_SERVICE=sendgrid
+      - EMAIL_FROM_NAME=Crypto Tracker
+      - EMAIL_FROM_EMAIL=noreply@example.com
+      - EMAIL_TO=your-email@example.com
+      - SENDGRID_API_KEY=your-sendgrid-api-key
+
+      # Check interval in minutes
+      - CHECK_INTERVAL=15
+    volumes:
+      - crypto_data:/app/data
+      - playwright_browsers:/app/.playwright-browsers
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "try { require('fs').statSync('/app/data/listings.json'); process.exit(0); } catch(e) { process.exit(1); }",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  crypto_data:
+    driver: local
+  playwright_browsers:
+    driver: local
