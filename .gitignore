@@ -15,3 +15,7 @@ npm-debug.log*
 
 # Runtime data
 data/ 
+
+# Debug files
+binance-debug.png
+*-debug.png
