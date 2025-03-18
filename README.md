@@ -1,6 +1,6 @@
 # crypto listing monitor
 
-a little tool i made to watch crypto exchanges for new coin listings and send me emails when something pops up. got tired of always missing the pumps 🚀
+a little tool i made to watch crypto exchanges for new coin listings and send me emails when something pops up. 
 
 ## what it does
 
@@ -42,7 +42,7 @@ ENABLE_OKX_ANNOUNCEMENTS=true
 
 got annoyed missing out on those sweet listing pumps. exchanges usually announce new coins days before listing them, and prices often spike as soon as the announcement drops. this checks both the APIs (for actual new listings) and the announcement pages (for upcoming listings).
 
-the announcement monitoring is the good stuff - it can catch listings before they happen and before everyone else notices.
+the announcement monitoring is the best feature - it can catch listings before they happen and before everyone else notices.
 
 ## project structure
 
