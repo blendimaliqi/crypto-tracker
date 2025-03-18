@@ -1,8 +1,43 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const fs = __importStar(require("fs/promises"));
+const path = __importStar(require("path"));
 const playwright_1 = require("playwright");
 const axios_1 = __importDefault(require("axios"));
 const jsdom_1 = require("jsdom");
@@ -17,6 +52,23 @@ async function fetchWithPlaywright() {
             "https://www.binance.com/en/support/announcement/c-48",
             "https://www.binance.com/en/support/announcement/latest-binance-news",
         ];
+        // Log environment info
+        console.log("Fetching Binance announcements using Playwright...");
+        console.log(`Current directory: ${process.cwd()}`);
+        console.log(`NODE_ENV: ${process.env.NODE_ENV}`);
+        console.log(`PLAYWRIGHT_BROWSERS_PATH: ${process.env.PLAYWRIGHT_BROWSERS_PATH || "not set"}`);
+        // Install browser on demand - critical for hosted environments
+        try {
+            const { execSync } = require("child_process");
+            console.log("Installing Playwright browser on demand...");
+            const output = execSync("npx playwright install chromium --with-deps", {
+                encoding: "utf8",
+            });
+            console.log("Playwright install output:", output);
+        }
+        catch (installError) {
+            console.error("Error installing browser:", installError.message);
+        }
         console.log("Launching browser...");
         browser = await playwright_1.chromium.launch({
             headless: true,
@@ -28,18 +80,55 @@ async function fetchWithPlaywright() {
                 "--no-first-run",
                 "--no-zygote",
                 "--disable-gpu",
+                "--hide-scrollbars",
+                "--mute-audio",
+                "--disable-web-security",
+                "--disable-notifications",
+                "--disable-extensions",
             ],
         });
         console.log(`Browser launched successfully. PLAYWRIGHT_BROWSERS_PATH=${process.env.PLAYWRIGHT_BROWSERS_PATH}`);
         // Print browser info to debug
         const browserVersion = await browser.version();
         console.log(`Browser version: ${browserVersion}`);
+        // Create a more stealth context with additional parameters to avoid detection
         const context = await browser.newContext({
             userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            viewport: { width: 1200, height: 800 },
+            viewport: { width: 1920, height: 1080 },
+            screen: { width: 1920, height: 1080 },
+            hasTouch: false,
+            isMobile: false,
+            deviceScaleFactor: 1,
+            acceptDownloads: true,
+            ignoreHTTPSErrors: true,
+            javaScriptEnabled: true,
+            locale: "en-US",
+            timezoneId: "America/New_York",
+            permissions: ["geolocation"],
+            colorScheme: "light",
         });
+        // Setup cookies for persistence if possible
+        const cookiesPath = path.join(process.cwd(), "data/binance-cookies.json");
+        try {
+            if (require("fs").existsSync(cookiesPath)) {
+                console.log("Loading saved cookies...");
+                const cookiesString = require("fs").readFileSync(cookiesPath);
+                const cookies = JSON.parse(cookiesString);
+                await context.addCookies(cookies);
+                console.log("Cookies loaded successfully");
+            }
+        }
+        catch (cookieError) {
+            console.log("No cookies found or error loading cookies:", cookieError.message);
+        }
         const results = [];
         let successfulFetch = false;
+        // Random sleep function for human-like behavior
+        const randomSleep = async (min, max) => {
+            const sleepTime = Math.floor(Math.random() * (max - min + 1)) + min;
+            console.log(`Waiting for ${sleepTime}ms...`);
+            await new Promise((resolve) => setTimeout(resolve, sleepTime));
+        };
         // Try each URL until we get results
         for (const url of announcementUrls) {
             if (successfulFetch)
@@ -47,18 +136,84 @@ async function fetchWithPlaywright() {
             try {
                 console.log(`Trying Binance URL: ${url}`);
                 const page = await context.newPage();
+                // Add human-like behavior
+                await page.addInitScript(() => {
+                    // Override the navigator properties
+                    const newProto = navigator.__proto__;
+                    delete newProto.webdriver;
+                    navigator.__proto__ = newProto;
+                });
+                // First go to the homepage to avoid direct access detection
+                await page.goto("https://www.binance.com/en", {
+                    waitUntil: "domcontentloaded",
+                    timeout: 30000,
+                });
+                console.log("Loaded Binance homepage");
+                await randomSleep(2000, 3000);
                 // Go directly to the announcements page
                 await page.goto(url, {
                     waitUntil: "domcontentloaded",
                     timeout: 30000,
                 });
                 console.log(`Loaded page: ${url}`);
+                // Simulate human scrolling
+                console.log("Simulating human-like scrolling...");
+                await page.evaluate(() => {
+                    return new Promise((resolve) => {
+                        let totalHeight = 0;
+                        const distance = 100;
+                        const timer = setInterval(() => {
+                            window.scrollBy(0, distance);
+                            totalHeight += distance;
+                            if (totalHeight >= document.body.scrollHeight) {
+                                clearInterval(timer);
+                                resolve();
+                            }
+                        }, 100);
+                    });
+                });
                 // Simple wait for content to load
-                await page.waitForTimeout(5000);
+                await randomSleep(3000, 5000);
+                // Check for verification page
+                const pageContent = await page.content();
+                if (pageContent.includes("Human Verification") ||
+                    pageContent.includes("verify") ||
+                    pageContent.includes("captcha")) {
+                    console.log("DETECTED HUMAN VERIFICATION PAGE - attempting to bypass...");
+                    // Try to solve simple verification if available
+                    try {
+                        await page
+                            .click('button:has-text("Verify")', { timeout: 5000 })
+                            .catch(() => { });
+                        await page
+                            .click('button:has-text("I am human")', { timeout: 5000 })
+                            .catch(() => { });
+                        await page.click(".slider", { timeout: 5000 }).catch(() => { });
+                        // Wait to see if verification completes
+                        await randomSleep(5000, 8000);
+                    }
+                    catch (verifyError) {
+                        console.log("Error during verification bypass attempt:", verifyError);
+                    }
+                }
                 // Take screenshot for debugging if we're in development
                 if (process.env.NODE_ENV !== "production") {
                     await page.screenshot({ path: "binance-debug.png" });
                     console.log("Screenshot saved to binance-debug.png");
+                }
+                else {
+                    // In production, try to save to the data directory
+                    try {
+                        const dataDir = path.join(process.cwd(), "data");
+                        await fs.mkdir(dataDir, { recursive: true }).catch(() => { });
+                        await page.screenshot({
+                            path: path.join(dataDir, "binance-debug.png"),
+                        });
+                        console.log("Screenshot saved to data/binance-debug.png");
+                    }
+                    catch (e) {
+                        console.log("Could not save screenshot:", e);
+                    }
                 }
                 // Get all links on the page
                 const links = await page.$$("a");
@@ -148,6 +303,15 @@ async function fetchWithPlaywright() {
                         continue;
                     }
                 }
+                // Save cookies for future use
+                try {
+                    const cookies = await context.cookies();
+                    require("fs").writeFileSync(cookiesPath, JSON.stringify(cookies));
+                    console.log("Cookies saved for future use");
+                }
+                catch (cookieError) {
+                    console.error("Failed to save cookies:", cookieError.message);
+                }
                 // If we found any results, mark as successful
                 if (results.length > 0) {
                     successfulFetch = true;
@@ -181,9 +345,6 @@ async function fetchWithAxios() {
     // Use the same URLs as in the Playwright approach
     const announcementUrls = [
         "https://www.binance.com/en/support/announcement/list/48",
-        "https://www.binance.com/en/support/announcement/new-cryptocurrency-listing",
-        "https://www.binance.com/en/support/announcement/c-48",
-        "https://www.binance.com/en/support/announcement/latest-binance-news",
     ];
     for (const url of announcementUrls) {
         try {
