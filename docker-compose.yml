@@ -5,6 +5,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    command:
+      [
+        "/bin/bash",
+        "-c",
+        "chmod +x /app/install-browsers.sh && /app/install-browsers.sh && node dist/index.js",
+      ]
     restart: unless-stopped
     environment:
       - NODE_ENV=production
@@ -26,12 +32,14 @@ services:
       - EMAIL_ENABLED=true
       - EMAIL_SERVICE=sendgrid
       - EMAIL_FROM_NAME=Crypto Tracker
-      - EMAIL_FROM_EMAIL=noreply@example.com
-      - EMAIL_TO=your-email@example.com
-      - SENDGRID_API_KEY=your-sendgrid-api-key
+      - EMAIL_FROM_EMAIL=noreply@blendimaliqi.com
+      - EMAIL_TO=blendi.maliqi93@gmail.com
+      - SENDGRID_API_KEY=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
 
       # Check interval in minutes
       - CHECK_INTERVAL=15
+      # Playwright browser path - IMPORTANT
+      - PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers
     volumes:
       - crypto_data:/app/data
       - playwright_browsers:/app/.playwright-browsers

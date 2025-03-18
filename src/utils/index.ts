@@ -20,6 +20,7 @@ export interface Announcement {
   link: string;
   date: string;
   exchange: string;
+  symbols?: string[]; // Optional array of symbols found in the announcement
 }
 
 export interface Adapter {
