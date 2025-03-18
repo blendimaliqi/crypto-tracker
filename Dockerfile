@@ -36,21 +36,24 @@ COPY package*.json ./
 # Install dependencies
 RUN npm install
 
-# Create persistent browser directory in /app instead of /root
-# This is more likely to be preserved across container restarts
-RUN mkdir -p /app/data /app/.playwright-browsers
-RUN chmod -R 777 /app/.playwright-browsers
+# Create persistent browser directory in both possible locations
+RUN mkdir -p /app/data /app/.playwright-browsers /root/.cache/ms-playwright
+RUN chmod -R 777 /app/.playwright-browsers /root/.cache/ms-playwright
 
-# Set environment variable for Playwright browsers - make it permanent
+# Set environment variable for Playwright browsers to both locations
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers
 
-# Install Playwright browsers in the persistent location
-RUN PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers npx playwright install chromium --with-deps
+# Install Playwright browsers in both locations for redundancy
+RUN npx playwright install chromium --with-deps
+
+# Also symlink the directory to handle both paths
+RUN ln -s /app/.playwright-browsers /root/.cache/ms-playwright || true
 
 # Verify browser installation and output detailed info
-RUN ls -la /app/.playwright-browsers
-RUN find /app/.playwright-browsers -type f -name "headless_shell" -o -name "chrome" -o -name "chrome.exe" | xargs -r ls -la || echo "No browser binaries found with exact names, listing all executables:"
-RUN find /app/.playwright-browsers -type f -executable | grep -v ".so" | xargs -r ls -la || echo "No executable files found"
+RUN ls -la /app/.playwright-browsers || echo "No browsers in /app directory"
+RUN ls -la /root/.cache/ms-playwright || echo "No browsers in /root directory"
+RUN find /app -name "headless_shell" -type f | xargs -r ls -la || echo "No headless_shell found in /app"
+RUN find /root -name "headless_shell" -type f | xargs -r ls -la || echo "No headless_shell found in /root"
 
 # Copy application code
 COPY . .
@@ -59,7 +62,7 @@ COPY . .
 RUN npm run build
 
 # Add startup script to ensure environment is properly configured
-RUN echo '#!/bin/bash\necho "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH"\necho "Listing browser files:"\nfind /app/.playwright-browsers -type f -executable -not -path "*/\.*" | head -10\nexec node dist/index.js' > /app/startup.sh
+RUN echo '#!/bin/bash\necho "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH"\necho "Checking Playwright browser locations:"\nfind /app -name "headless_shell" -type f | xargs -r ls -la || echo "No headless_shell found in /app"\nfind /root -name "headless_shell" -type f | xargs -r ls -la || echo "No headless_shell found in /root"\nLS_PWD="$(ls -la $PWD)"\necho "Current directory: $PWD"\necho "$LS_PWD"\nexec node dist/index.js' > /app/startup.sh
 RUN chmod +x /app/startup.sh
 
 # Set environment variable for Node.js to report uncaught exceptions

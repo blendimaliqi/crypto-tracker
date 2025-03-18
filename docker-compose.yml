@@ -9,7 +9,7 @@ services:
       [
         "/bin/bash",
         "-c",
-        "chmod +x /app/install-browsers.sh && /app/install-browsers.sh && node dist/index.js",
+        "chmod +x /app/install-browsers.sh && /app/install-browsers.sh && /app/startup.sh",
       ]
     restart: unless-stopped
     environment:
@@ -38,11 +38,15 @@ services:
 
       # Check interval in minutes
       - CHECK_INTERVAL=15
-      # Playwright browser path - IMPORTANT
+      # Playwright browser paths - set both for maximum compatibility
       - PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers
+      - PW_BROWSERS_PATH_CACHE=/root/.cache/ms-playwright
+      # Debug flags
+      - DEBUG=pw:api,pw:browser
     volumes:
       - crypto_data:/app/data
       - playwright_browsers:/app/.playwright-browsers
+      - playwright_cache:/root/.cache/ms-playwright
     healthcheck:
       test:
         [
@@ -61,3 +65,4 @@ volumes:
     driver: local
   playwright_browsers:
     driver: local
+  playwright_cache:
