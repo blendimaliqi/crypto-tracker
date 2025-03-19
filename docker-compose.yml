@@ -41,16 +41,22 @@ services:
       # Check interval in minutes
       - CHECK_INTERVAL=15
 
+      # Chrome/browser settings
+      - CHROME_PATH=/usr/bin/google-chrome-stable
+      - CHROME_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+      - DISPLAY=:99
+      - XVFB_WHD=1920x1080x24
+
       # Playwright browser paths - set both for maximum compatibility
       - PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers
       - PW_BROWSERS_PATH_CACHE=/root/.cache/ms-playwright
 
-      # Display for Playwright
-      - DISPLAY=:99
-      - XVFB_WHD=1920x1080x24
-
       # Debug flags
       - DEBUG=pw:api,pw:browser
+
+      # System flags
+      - PYTHONUNBUFFERED=1
+      - NODE_OPTIONS=--unhandled-rejections=strict
     volumes:
       - crypto_data:/app/data
       - playwright_browsers:/app/.playwright-browsers
@@ -67,6 +73,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 5s
+    shm_size: 2gb # Increase shared memory for Chrome
 
 volumes:
   crypto_data:

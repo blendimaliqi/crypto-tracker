@@ -2,7 +2,23 @@ FROM node:16
 
 WORKDIR /app
 
-# Install Playwright dependencies
+# Add Chrome repository and install Chrome
+RUN apt-get update && apt-get install -y \
+    apt-transport-https \
+    ca-certificates \
+    curl \
+    gnupg \
+    wget \
+    --no-install-recommends \
+    && curl -sSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] https://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y \
+    google-chrome-stable \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install common dependencies for both Chrome and Playwright
 RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     libnss3 \
@@ -27,11 +43,18 @@ RUN apt-get update && apt-get install -y \
     fonts-liberation \
     libappindicator3-1 \
     xdg-utils \
-    wget \
-    curl \
-    unzip \
+    xvfb \
     procps \
     && rm -rf /var/lib/apt/lists/*
+
+# Set up Chrome paths and environment
+ENV CHROME_PATH=/usr/bin/google-chrome-stable
+ENV CHROME_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+RUN echo "export CHROME_PATH=/usr/bin/google-chrome-stable" >> /root/.bashrc
+RUN echo "export CHROME_EXECUTABLE_PATH=/usr/bin/google-chrome-stable" >> /root/.bashrc
+
+# Verify Chrome installation
+RUN google-chrome-stable --version || echo "Chrome not found but continuing"
 
 # Copy package files first for better layer caching
 COPY package*.json ./
@@ -41,31 +64,15 @@ RUN npm install
 
 # Create persistent browser directory in both possible locations
 RUN mkdir -p /app/data /app/.playwright-browsers /root/.cache/ms-playwright
-RUN chmod -R 777 /app/.playwright-browsers /root/.cache/ms-playwright
+RUN chmod -R 777 /app/.playwright-browsers /root/.cache/ms-playwright /app/data
 
 # Set environment variable for Playwright browsers to both locations
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers
 ENV PW_BROWSERS_PATH_CACHE=/root/.cache/ms-playwright
 ENV NODE_ENV=production
 
-# Install Playwright browsers in both locations for redundancy
-RUN npx playwright install chromium --with-deps
-
-# Also symlink the directory to handle both paths
-RUN ln -s /app/.playwright-browsers/* /root/.cache/ms-playwright/ || true
-
-# Verify browser installation and output detailed info
-RUN ls -la /app/.playwright-browsers || echo "No browsers in /app directory"
-RUN ls -la /root/.cache/ms-playwright || echo "No browsers in /root directory"
-RUN find /app -name "chrome" -type f | xargs -r ls -la || echo "No chrome found in /app"
-RUN find /root -name "chrome" -type f | xargs -r ls -la || echo "No chrome found in /root"
-
-# Find and set Chrome executable path if possible
-RUN CHROME_PATH=$(find /app -name "chrome" -type f | head -n 1) && \
-    if [ -n "$CHROME_PATH" ]; then \
-      echo "export CHROME_EXECUTABLE_PATH=$CHROME_PATH" >> /root/.bashrc && \
-      echo "Found Chrome at: $CHROME_PATH"; \
-    fi
+# DISPLAY for Chrome
+ENV DISPLAY=:99
 
 # Copy application code
 COPY . .
@@ -77,7 +84,56 @@ RUN chmod +x /app/install-browsers.sh
 RUN npm run build
 
 # Add startup script to ensure environment is properly configured
-RUN echo '#!/bin/bash\necho "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH"\necho "PW_BROWSERS_PATH_CACHE=$PW_BROWSERS_PATH_CACHE"\necho "CHROME_EXECUTABLE_PATH=$CHROME_EXECUTABLE_PATH"\necho "Checking Playwright browser locations:"\nfind /app -name "chrome" -type f | xargs -r ls -la || echo "No chrome found in /app"\nfind /root -name "chrome" -type f | xargs -r ls -la || echo "No chrome found in /root"\nLS_PWD="$(ls -la $PWD)"\necho "Current directory: $PWD"\necho "$LS_PWD"\nexec node dist/index.js' > /app/startup.sh
+RUN echo '#!/bin/bash\n\
+echo "===== CRYPTO TRACKER STARTUP ===="\n\
+echo "CHROME_PATH=$CHROME_PATH"\n\
+echo "CHROME_EXECUTABLE_PATH=$CHROME_EXECUTABLE_PATH"\n\
+echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH"\n\
+echo "PW_BROWSERS_PATH_CACHE=$PW_BROWSERS_PATH_CACHE"\n\
+\n\
+# Setup Xvfb for headless browser\n\
+echo "Starting Xvfb..."\n\
+Xvfb :99 -screen 0 1280x720x16 &\n\
+export DISPLAY=:99\n\
+sleep 2\n\
+\n\
+# Verify display is working\n\
+echo "Checking if DISPLAY is available..."\n\
+if xdpyinfo -display :99 >/dev/null 2>&1; then\n\
+  echo "✅ Xvfb is running correctly on display :99"\n\
+else\n\
+  echo "❌ Xvfb failed to start properly on :99"\n\
+fi\n\
+\n\
+# Check Chrome installation\n\
+echo "Chrome version:"\n\
+if [ -n "$CHROME_EXECUTABLE_PATH" ] && [ -x "$CHROME_EXECUTABLE_PATH" ]; then\n\
+  $CHROME_EXECUTABLE_PATH --version --headless || echo "Chrome version check failed"\n\
+  echo "Chrome executable exists and is executable"\n\
+else\n\
+  echo "Chrome executable path not valid: $CHROME_EXECUTABLE_PATH"\n\
+  # Try to find Chrome\n\
+  CHROME_CANDIDATES=$(find / -name chrome -o -name chromium -o -name "google-chrome" -o -name "chromium-browser" -type f 2>/dev/null)\n\
+  if [ -n "$CHROME_CANDIDATES" ]; then\n\
+    echo "Found potential Chrome binaries:"\n\
+    echo "$CHROME_CANDIDATES"\n\
+    CHROME_PICK=$(echo "$CHROME_CANDIDATES" | head -n 1)\n\
+    echo "Setting CHROME_EXECUTABLE_PATH=$CHROME_PICK"\n\
+    export CHROME_EXECUTABLE_PATH=$CHROME_PICK\n\
+  else\n\
+    echo "No Chrome binaries found!"\n\
+  fi\n\
+fi\n\
+\n\
+# Run installer script to ensure browsers are available\n\
+echo "Running browser installer script..."\n\
+/app/install-browsers.sh\n\
+\n\
+# Show current working directory and start app\n\
+echo "Current directory: $PWD"\n\
+ls -la $PWD\n\
+echo "===== STARTING APP ====="\n\
+exec node dist/index.js' > /app/startup.sh
 RUN chmod +x /app/startup.sh
 
 # Set environment variable for Node.js to report uncaught exceptions
