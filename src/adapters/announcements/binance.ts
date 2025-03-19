@@ -14,16 +14,12 @@ const binanceAdapter: AnnouncementAdapter = {
   async fetchAnnouncements(): Promise<Announcement[]> {
     console.log("Starting Binance announcement fetch...");
 
+    // Use only the main URL that is known to work
+    const BINANCE_URL =
+      "https://www.binance.com/en/support/announcement/list/48";
+
     let browser = null;
     try {
-      // Use several known working URLs to maximize chances of success
-      const announcementUrls = [
-        "https://www.binance.com/en/support/announcement/list/48",
-        "https://www.binance.com/en/support/announcement/new-cryptocurrency-listing",
-        "https://www.binance.com/en/support/announcement/c-48",
-        "https://www.binance.com/en/support/announcement/latest-binance-news",
-      ];
-
       // Log environment info
       console.log("Fetching Binance announcements using Playwright...");
       console.log(`Current directory: ${process.cwd()}`);
@@ -35,44 +31,23 @@ const binanceAdapter: AnnouncementAdapter = {
       );
       console.log(`DISPLAY: ${process.env.DISPLAY || "not set"}`);
 
-      // Log detailed browser information for debugging
-      const possibleBrowserPaths = [
-        "/app/.playwright-browsers",
-        "/root/.cache/ms-playwright",
-        path.join(process.cwd(), "node_modules/playwright/.local-browsers"),
-      ];
+      // Path for storing cookies and debug files
+      const dataDir = path.join(process.cwd(), "data");
+      const cookiesPath = path.join(dataDir, "binance-cookies.json");
+      const screenshotPath = path.join(dataDir, "binance-debug.png");
+      const htmlDumpPath = path.join(dataDir, "binance-page.html");
 
-      for (const browserPath of possibleBrowserPaths) {
-        console.log(`Checking for browser in: ${browserPath}`);
-        if (fs.existsSync(browserPath)) {
-          console.log(`✅ Directory exists: ${browserPath}`);
-          try {
-            const files = fs.readdirSync(browserPath);
-            console.log(`Files in ${browserPath}: ${files.join(", ")}`);
-          } catch (e) {
-            console.log(`Error reading directory: ${e.message}`);
-          }
-        } else {
-          console.log(`❌ Directory does not exist: ${browserPath}`);
-        }
-      }
-
-      // Install browser on demand if needed
+      // Make sure data directory exists
       try {
-        const { execSync } = require("child_process");
-        console.log("Installing Playwright browser on demand...");
-        const output = execSync("npx playwright install chromium --with-deps", {
-          encoding: "utf8",
-        });
-        console.log("Playwright install output:", output);
-      } catch (installError) {
-        console.error("Error installing browser:", installError.message);
+        if (!fs.existsSync(dataDir)) {
+          fs.mkdirSync(dataDir, { recursive: true });
+          console.log(`Created data directory: ${dataDir}`);
+        }
+      } catch (dirError) {
+        console.error("Error creating data directory:", dirError);
       }
 
-      // Path for storing cookies
-      const cookiesPath = path.join(process.cwd(), "data/binance-cookies.json");
-
-      // Launch browser with stealth mode settings - using same settings as old implementation
+      // Launch browser with stealth mode settings
       console.log("Launching Playwright browser for Binance...");
       browser = await chromium.launch({
         headless: true,
@@ -148,37 +123,40 @@ const binanceAdapter: AnnouncementAdapter = {
         await page.waitForTimeout(sleepTime);
       };
 
-      // Go to binance homepage first
-      console.log("Navigating to Binance homepage...");
-      await page.goto("https://www.binance.com/en", {
+      // Go directly to the announcements page - skipping homepage to simplify
+      console.log(`Going directly to Binance announcements: ${BINANCE_URL}`);
+
+      // Increase timeout for slow connections
+      await page.goto(BINANCE_URL, {
         waitUntil: "domcontentloaded",
-        timeout: 60000,
+        timeout: 90000, // 90 seconds should be enough
       });
-      console.log("Loaded Binance homepage");
-      await randomSleep(2000, 3000);
+      console.log("Page loaded - checking if content is available");
 
-      // Pick a random announcement URL from our list
-      const url =
-        announcementUrls[Math.floor(Math.random() * announcementUrls.length)];
-      console.log(`Going to announcement page: ${url}`);
-
-      // Go to announcements page
-      await page.goto(url, {
-        waitUntil: "domcontentloaded",
-        timeout: 60000,
-      });
-      console.log(`Loaded page: ${url}`);
-
-      // Take a screenshot for debugging
+      // Wait for some content to appear indicating page load success
       try {
-        const screenshotPath = path.join(
-          process.cwd(),
-          "data/binance-debug.png"
-        );
-        await page.screenshot({ path: screenshotPath });
+        await page.waitForSelector("a, h1, h2, .bn-flex", { timeout: 10000 });
+        console.log("Content found on page!");
+      } catch (waitError) {
+        console.warn("Warning: Timed out waiting for content selectors");
+      }
+
+      // Take a screenshot and save HTML for debugging
+      try {
+        await page.screenshot({ path: screenshotPath, fullPage: true });
         console.log(`Saved debug screenshot to ${screenshotPath}`);
-      } catch (screenshotError) {
-        console.error("Failed to save screenshot:", screenshotError);
+
+        const html = await page.content();
+        fs.writeFileSync(htmlDumpPath, html);
+        console.log(
+          `Saved page HTML to ${htmlDumpPath} (${html.length} bytes)`
+        );
+
+        // Log a preview of the HTML to see what we're getting
+        console.log("HTML preview:");
+        console.log(html.substring(0, 500) + "...");
+      } catch (saveError) {
+        console.error("Failed to save debug files:", saveError);
       }
 
       // Simulate human scrolling
@@ -200,40 +178,63 @@ const binanceAdapter: AnnouncementAdapter = {
 
       await randomSleep(2000, 3000);
 
-      // Check for verification page
-      const pageContent = await page.content();
-      if (
-        pageContent.includes("Human Verification") ||
-        pageContent.includes("verify") ||
-        pageContent.includes("captcha")
-      ) {
-        console.log(
-          "DETECTED HUMAN VERIFICATION PAGE - attempting to bypass..."
-        );
-        try {
-          await page
-            .click('button:has-text("Verify")', { timeout: 5000 })
-            .catch(() => {});
-          await page
-            .click('button:has-text("I am human")', { timeout: 5000 })
-            .catch(() => {});
-          await page.click(".slider", { timeout: 5000 }).catch(() => {});
-          await randomSleep(5000, 8000);
-        } catch (verifyError) {
-          console.log("Error during verification bypass attempt:", verifyError);
-        }
-      }
+      // Check the whole page structure using DOM analysis - VERBOSE for debugging
+      console.log("Analyzing page structure:");
+      const pageStructure = await page.evaluate(() => {
+        // Get page title
+        const title = document.title;
 
-      // Extract announcements using the page.evaluate method from old.index.js
+        // Count all elements by type
+        const elements = {
+          divs: document.querySelectorAll("div").length,
+          links: document.querySelectorAll("a").length,
+          headings: document.querySelectorAll("h1, h2, h3, h4, h5, h6").length,
+          paragraphs: document.querySelectorAll("p").length,
+          bnFlex: document.querySelectorAll(".bn-flex").length,
+          sections: document.querySelectorAll("section").length,
+        };
+
+        // Check for common UI frameworks
+        const frameworks = {
+          react: document.querySelector("[data-reactroot]") !== null,
+          styledComponents:
+            document.querySelectorAll('[class^="sc-"]').length > 0,
+          tailwind: document.querySelectorAll('[class*="text-"]').length > 0,
+        };
+
+        // Get some of the links
+        const sampleLinks = Array.from(document.querySelectorAll("a"))
+          .slice(0, 10)
+          .map((link) => ({
+            text: link.textContent?.trim() || "No text",
+            href: link.getAttribute("href") || "No href",
+            classes: link.className || "No class",
+          }));
+
+        return {
+          title,
+          url: window.location.href,
+          elements,
+          frameworks,
+          sampleLinks,
+        };
+      });
+
+      console.log(
+        "Page structure analysis:",
+        JSON.stringify(pageStructure, null, 2)
+      );
+
+      // Extract announcements
       console.log("Extracting announcement data...");
       const announcements = await page.evaluate(() => {
         const results = [];
+        console.log("Starting in-browser announcement extraction");
 
-        // Log element counts
-        function logElementCount(selector, name) {
-          const elements = document.querySelectorAll(selector);
-          console.log(`Found ${elements.length} ${name} elements`);
-          return elements;
+        function logCount(selector, name) {
+          const items = document.querySelectorAll(selector);
+          console.log(`Found ${items.length} ${name}`);
+          return items;
         }
 
         // Extract symbols from title
@@ -257,142 +258,143 @@ const binanceAdapter: AnnouncementAdapter = {
           return symbols;
         };
 
-        // Method 1: Target the specific structure
-        const headlines = logElementCount(
-          'h2.typography-headline5, h2[class*="typography"], .typography-headline5',
-          "headline"
+        // Method 1: Find all announcement cards directly
+        console.log("Method 1: Looking for announcement cards");
+        const cards = logCount(
+          'div[class*="css"][class*="card"]',
+          "announcement cards"
         );
 
-        headlines.forEach((headline) => {
-          const text = headline.textContent.trim();
-          console.log(`Found headline text: "${text}"`);
-          if (text && text.includes("Listing")) {
-            // Found a listing headline, now find the actual announcements
-            const parentSection = headline.closest(".bn-flex");
-            if (parentSection) {
-              // Find all announcement links in this section
-              const links = parentSection.querySelectorAll(
-                'a[class*="text-Primary"], a.text-PrimaryText'
-              );
-              links.forEach((link) => {
-                const title = link.textContent.trim();
-                if (!title || title.length < 10) return;
+        if (cards.length > 0) {
+          cards.forEach((card) => {
+            // Find the title and link elements within the card
+            const linkElement = card.querySelector("a");
+            if (linkElement) {
+              const title = linkElement.textContent?.trim() || "";
+              const url = linkElement.href || "";
 
-                // Check if it contains listing-related keywords
+              if (title && title.length > 10 && url) {
+                const symbols = extractSymbols(title);
+                results.push({ title, url, symbols });
+                console.log(`Found announcement: ${title}`);
+              }
+            }
+          });
+        }
+
+        // Method 2: Find headings and lists
+        console.log("Method 2: Looking for headings and their containers");
+        const headings = logCount("h1, h2, h3, h4", "headings");
+
+        headings.forEach((heading) => {
+          const text = heading.textContent?.trim() || "";
+          console.log(`Checking heading: ${text}`);
+
+          // Find related links under this heading
+          const container = heading.closest("div[class], section");
+          if (container) {
+            const links = container.querySelectorAll("a");
+            console.log(`Found ${links.length} links under this heading`);
+
+            links.forEach((link) => {
+              const title = link.textContent?.trim() || "";
+              const url = link.href || "";
+
+              if (title && title.length > 10 && url) {
+                // Check if it's listing-related
                 const keywords = [
                   "list",
                   "add",
-                  "adds",
-                  "adding",
-                  "added",
-                  "will list",
                   "support",
-                  "new crypto",
+                  "new",
+                  "token",
+                  "trading",
                 ];
                 const hasKeyword = keywords.some((kw) =>
                   title.toLowerCase().includes(kw)
                 );
 
                 if (hasKeyword) {
-                  const url = link.href;
                   const symbols = extractSymbols(title);
-                  results.push({
-                    title,
-                    url,
-                    symbols,
-                  });
+                  results.push({ title, url, symbols });
+                  console.log(`Found listing announcement: ${title}`);
                 }
-              });
-            }
-          }
-        });
-
-        // Method 2: Direct targeting of announcement items
-        const announcementItems = logElementCount(
-          'a[href*="/support/announcement/"], a[href*="/support/announcement/detail/"]',
-          "direct announcement links"
-        );
-
-        announcementItems.forEach((item) => {
-          const title = item.textContent.trim();
-          if (!title || title.length < 10) return;
-
-          const url = item.href;
-          const symbols = extractSymbols(title);
-
-          // Check for duplicates before adding
-          const isDuplicate = results.some(
-            (existing) =>
-              existing.title === title || (existing.url === url && url !== "")
-          );
-
-          if (!isDuplicate) {
-            results.push({
-              title,
-              url,
-              symbols,
+              }
             });
           }
         });
 
-        // Method 3: Target the specific bn-flex structure
-        const flexItems = logElementCount(
-          ".bn-flex.flex-col.gap-6, .bn-flex.flex-col.gap-4, div[class*='bn-flex']",
-          "flex container"
-        );
+        // Method 3: Find any listing-related links directly
+        console.log("Method 3: Looking for listing-related links");
+        const allLinks = logCount("a", "links");
+        let linkCount = 0;
 
-        flexItems.forEach((container) => {
-          // Look for links within these containers
-          const links = container.querySelectorAll("a");
-          links.forEach((link) => {
-            const title = link.textContent.trim();
-            if (!title || title.length < 10) return;
+        allLinks.forEach((link) => {
+          const title = link.textContent?.trim() || "";
+          const url = link.href || "";
 
-            // Check if it contains listing-related keywords
-            const keywords = [
-              "list",
-              "add",
-              "adds",
-              "adding",
-              "added",
-              "will list",
-              "support",
-              "new crypto",
-            ];
-            const hasKeyword = keywords.some((kw) =>
-              title.toLowerCase().includes(kw)
-            );
+          // Skip if already found or too short
+          if (title.length < 10 || !url) return;
 
-            if (hasKeyword) {
-              const url = link.href;
+          // Look for listing-related announcements
+          const keywords = [
+            "list",
+            "adds",
+            "adding",
+            "will list",
+            "support",
+            "new crypto",
+          ];
+          const hasKeyword = keywords.some((kw) =>
+            title.toLowerCase().includes(kw)
+          );
+
+          if (hasKeyword) {
+            // Check if it's a listing URL pattern
+            const isAnnouncementUrl =
+              url.includes("/support/announcement/") ||
+              url.includes("/listing") ||
+              url.includes("/c-48");
+
+            if (isAnnouncementUrl) {
+              linkCount++;
               const symbols = extractSymbols(title);
 
-              // Check for duplicates before adding
+              // Check for duplicates
               const isDuplicate = results.some(
-                (item) =>
-                  item.title === title || (item.url === url && url !== "")
+                (item) => item.title === title || item.url === url
               );
 
               if (!isDuplicate) {
-                results.push({
-                  title,
-                  url,
-                  symbols,
-                });
+                results.push({ title, url, symbols });
+                console.log(`Found listing link: ${title}`);
               }
             }
-          });
+          }
         });
 
-        console.log(
-          `Total results found in browser context: ${results.length}`
-        );
+        console.log(`Found ${linkCount} listing-related links`);
+        console.log(`Total unique announcements found: ${results.length}`);
         return results;
       });
 
       console.log(
         `Extracted ${announcements.length} announcements from page content`
       );
+
+      // Log each found announcement for debugging
+      if (announcements.length > 0) {
+        console.log("Found announcements:");
+        announcements.forEach((a, i) => {
+          console.log(
+            `[${i + 1}] ${a.title} - URL: ${a.url} - Symbols: ${
+              a.symbols?.join(", ") || "none"
+            }`
+          );
+        });
+      } else {
+        console.warn("WARNING: No announcements found on the Binance page");
+      }
 
       // Save cookies for future use
       try {
@@ -436,9 +438,7 @@ const binanceAdapter: AnnouncementAdapter = {
                 symbols,
               });
 
-              console.log(
-                `Added Binance announcement: "${title.substring(0, 50)}..."`
-              );
+              console.log(`Added Binance announcement: "${title}"`);
             }
           }
         } catch (announcementError) {
@@ -449,6 +449,13 @@ const binanceAdapter: AnnouncementAdapter = {
       // Close browser
       await browser.close();
       console.log("Closed browser");
+
+      // If no results from direct method, try fallback
+      if (results.length === 0) {
+        console.log("No results from browser method, trying Axios fallback");
+        const axiosResults = await fetchWithAxios();
+        return axiosResults;
+      }
 
       return results;
     } catch (error) {
@@ -472,138 +479,176 @@ async function fetchWithAxios(): Promise<Announcement[]> {
   console.log("Fetching Binance announcements with Axios fallback...");
   const results: Announcement[] = [];
 
-  // Try multiple URLs
-  const announcementUrls = [
-    "https://www.binance.com/en/support/announcement/list/48",
-    "https://www.binance.com/en/support/announcement/c-48",
-    "https://www.binance.com/en/support/announcement/new-cryptocurrency-listing",
-  ];
+  // Use only the main URL
+  const BINANCE_URL = "https://www.binance.com/en/support/announcement/list/48";
 
-  for (const url of announcementUrls) {
+  try {
+    console.log(`Fetching Binance announcements from URL: ${BINANCE_URL}`);
+
+    // Try to mimic a real browser
+    const response = await axios.get(BINANCE_URL, {
+      timeout: 60000,
+      maxRedirects: 5,
+      headers: {
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        Connection: "keep-alive",
+        "Cache-Control": "max-age=0",
+        "Sec-Ch-Ua":
+          '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+        Referer: "https://www.binance.com/en",
+      },
+    });
+
+    console.log(`Binance response status: ${response.status}`);
+
+    // Save response to file for debugging
     try {
-      console.log(`Fetching Binance announcements from URL: ${url}`);
+      const dataDir = path.join(process.cwd(), "data");
+      const responsePath = path.join(dataDir, "binance-axios-response.html");
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
 
-      // Try to mimic a real browser
-      const response = await axios.get(url, {
-        timeout: 60000,
-        maxRedirects: 5,
-        headers: {
-          Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-          "Accept-Language": "en-US,en;q=0.9",
-          Connection: "keep-alive",
-          "Cache-Control": "max-age=0",
-          "Sec-Ch-Ua":
-            '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-          "Sec-Ch-Ua-Mobile": "?0",
-          "Sec-Ch-Ua-Platform": '"Windows"',
-          "Sec-Fetch-Dest": "document",
-          "Sec-Fetch-Mode": "navigate",
-          "Sec-Fetch-Site": "same-origin",
-          "Sec-Fetch-User": "?1",
-          "Upgrade-Insecure-Requests": "1",
-          Referer: "https://www.binance.com/en",
-        },
-      });
+      // Write response to file
+      if (typeof response.data === "string") {
+        fs.writeFileSync(responsePath, response.data);
+      } else {
+        fs.writeFileSync(responsePath, JSON.stringify(response.data, null, 2));
+      }
+      console.log(`Saved Axios response to ${responsePath}`);
+    } catch (saveError) {
+      console.error("Failed to save Axios response:", saveError);
+    }
 
-      console.log(`Binance response status for ${url}: ${response.status}`);
+    if (response.status === 200 || response.status === 202) {
+      const html = response.data;
+      console.log(
+        `Binance HTML loaded, length: ${
+          typeof html === "string" ? html.length : "JSON response"
+        } bytes`
+      );
 
-      if (response.status === 200 || response.status === 202) {
-        const html = response.data;
+      // Handle possible JSON response
+      if (typeof html === "object" && html !== null) {
+        console.log("Received JSON response, processing...");
         console.log(
-          `Binance HTML loaded from ${url}, length: ${html?.length || 0} bytes`
+          "JSON preview:",
+          JSON.stringify(html).substring(0, 200) + "..."
         );
 
-        // Handle possible JSON response
-        if (typeof html === "object" && html !== null) {
-          console.log("Received JSON response, processing...");
-          try {
-            // Extract from JSON structure
-            if (html.data && Array.isArray(html.data.catalogs)) {
-              console.log(
-                `Found ${html.data.catalogs.length} announcements in JSON`
-              );
+        try {
+          // Extract from JSON structure
+          if (html.data && Array.isArray(html.data.catalogs)) {
+            console.log(
+              `Found ${html.data.catalogs.length} announcements in JSON`
+            );
 
-              for (const item of html.data.catalogs) {
-                if (item.title && item.code) {
-                  const title = item.title;
-                  const fullUrl = `https://www.binance.com/en/support/announcement/${item.code}`;
+            for (const item of html.data.catalogs) {
+              if (item.title && item.code) {
+                const title = item.title;
+                const fullUrl = `https://www.binance.com/en/support/announcement/${item.code}`;
 
-                  // Extract symbols from title
-                  const symbols: string[] = [];
-                  const symbolMatches = title.match(/\(([A-Z0-9]{2,10})\)/g);
+                // Extract symbols from title
+                const symbols: string[] = [];
+                const symbolMatches = title.match(/\(([A-Z0-9]{2,10})\)/g);
 
-                  if (symbolMatches) {
-                    symbolMatches.forEach((match) => {
-                      const symbol = match.replace(/[()]/g, "");
-                      if (
-                        symbol.length >= 2 &&
-                        symbol.length <= 10 &&
-                        ![
-                          "FOR",
-                          "THE",
-                          "AND",
-                          "USD",
-                          "USDT",
-                          "BTC",
-                          "ETH",
-                        ].includes(symbol)
-                      ) {
-                        symbols.push(symbol);
-                      }
-                    });
-                  }
-
-                  // Filter out delistings
-                  const isDelisting = [
-                    "delist",
-                    "remov",
-                    "deprecat",
-                    "discontinu",
-                  ].some((word) => title.toLowerCase().includes(word));
-
-                  if (!isDelisting) {
-                    // Create a unique ID
-                    const id = `binance-${Buffer.from(
-                      `${title}-${fullUrl}`
-                    ).toString("base64")}`;
-
-                    // Add to results if not a duplicate
-                    if (!results.some((a) => a.id === id)) {
-                      results.push({
-                        id,
-                        exchange: "binance",
-                        title,
-                        link: fullUrl,
-                        date: new Date().toISOString(),
-                        symbols,
-                      });
-
-                      console.log(
-                        `Added Binance announcement (from JSON): "${title.substring(
-                          0,
-                          50
-                        )}..."`
-                      );
+                if (symbolMatches) {
+                  symbolMatches.forEach((match) => {
+                    const symbol = match.replace(/[()]/g, "");
+                    if (
+                      symbol.length >= 2 &&
+                      symbol.length <= 10 &&
+                      ![
+                        "FOR",
+                        "THE",
+                        "AND",
+                        "USD",
+                        "USDT",
+                        "BTC",
+                        "ETH",
+                      ].includes(symbol)
+                    ) {
+                      symbols.push(symbol);
                     }
+                  });
+                }
+
+                // Filter out delistings
+                const isDelisting = [
+                  "delist",
+                  "remov",
+                  "deprecat",
+                  "discontinu",
+                ].some((word) => title.toLowerCase().includes(word));
+
+                if (!isDelisting) {
+                  // Create a unique ID
+                  const id = `binance-${Buffer.from(
+                    `${title}-${fullUrl}`
+                  ).toString("base64")}`;
+
+                  // Add to results if not a duplicate
+                  if (!results.some((a) => a.id === id)) {
+                    results.push({
+                      id,
+                      exchange: "binance",
+                      title,
+                      link: fullUrl,
+                      date: new Date().toISOString(),
+                      symbols,
+                    });
+
+                    console.log(
+                      `Added Binance announcement (from JSON): "${title}"`
+                    );
                   }
                 }
               }
-
-              if (results.length > 0) {
-                continue; // If we found results from JSON, skip HTML parsing
-              }
             }
-          } catch (jsonError) {
-            console.log("Error parsing JSON response:", jsonError);
-          }
-        }
+          } else {
+            console.log("JSON doesn't contain expected catalogs structure");
 
+            // Log the actual structure for debugging
+            if (html.data) {
+              console.log("Data keys:", Object.keys(html.data));
+            } else {
+              console.log("Root keys:", Object.keys(html));
+            }
+          }
+        } catch (jsonError) {
+          console.log("Error parsing JSON response:", jsonError);
+        }
+      } else if (typeof html === "string") {
         // Parse HTML using JSDOM
         const dom = new JSDOM(html);
         const document = dom.window.document;
+
+        console.log("Page title:", document.title);
+
+        // Check for common selectors that might indicate if we're on the right page
+        console.log("Page structure analysis:");
+        console.log(
+          `- Has main content: ${document.querySelector("main") !== null}`
+        );
+        console.log(
+          `- Number of links: ${document.querySelectorAll("a").length}`
+        );
+        console.log(
+          `- Has bn-flex elements: ${
+            document.querySelectorAll(".bn-flex").length
+          }`
+        );
 
         // Get all links on the page
         const links = document.querySelectorAll("a");
@@ -702,10 +747,7 @@ async function fetchWithAxios(): Promise<Announcement[]> {
                   });
 
                   console.log(
-                    `Added Binance announcement (from HTML): "${title.substring(
-                      0,
-                      50
-                    )}..."`
+                    `Added Binance announcement (from HTML): "${title}"`
                   );
                 }
               }
@@ -716,10 +758,9 @@ async function fetchWithAxios(): Promise<Announcement[]> {
           }
         }
       }
-    } catch (error) {
-      console.log(`Error fetching Binance announcements from ${url}:`, error);
-      continue;
     }
+  } catch (error) {
+    console.log(`Error fetching Binance announcements:`, error);
   }
 
   console.log(
