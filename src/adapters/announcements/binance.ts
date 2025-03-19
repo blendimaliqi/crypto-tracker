@@ -31,7 +31,7 @@ const binanceAdapter: AnnouncementAdapter = {
         "Trying multiple public sources for Binance announcements..."
       );
 
-      // Try each method in sequence until one succeeds
+      // Try each method and combine results, eliminating duplicates
       const methods = [
         fetchFromRSS,
         fetchFromPublicAPI,
@@ -39,20 +39,37 @@ const binanceAdapter: AnnouncementAdapter = {
         fetchFromMarketData,
       ];
 
+      const allResults: Announcement[] = [];
+      const seenIds = new Set<string>();
+      const seenTitlesAndSymbols = new Set<string>();
+
       for (const method of methods) {
         try {
           console.log(`Trying method: ${method.name}...`);
           const results = await method();
+          console.log(
+            `Method ${method.name} returned ${results.length} results`
+          );
 
-          if (results.length > 0) {
-            console.log(
-              `Success! Found ${results.length} announcements via ${method.name}`
-            );
-            return results;
-          } else {
-            console.log(
-              `Method ${method.name} returned no results, trying next method...`
-            );
+          // Process each result and only add if not a duplicate
+          for (const announcement of results) {
+            // Create a unique key based on title and symbols
+            const titleAndSymbols = `${
+              announcement.title
+            }-${announcement.symbols.sort().join(",")}`;
+
+            // Add only if we haven't seen this ID or title+symbols combination before
+            if (
+              !seenIds.has(announcement.id) &&
+              !seenTitlesAndSymbols.has(titleAndSymbols)
+            ) {
+              seenIds.add(announcement.id);
+              seenTitlesAndSymbols.add(titleAndSymbols);
+              allResults.push(announcement);
+              console.log(`Added unique announcement: "${announcement.title}"`);
+            } else {
+              console.log(`Skipping duplicate: "${announcement.title}"`);
+            }
           }
         } catch (error) {
           console.error(`Error with method ${method.name}:`, error.message);
@@ -60,8 +77,8 @@ const binanceAdapter: AnnouncementAdapter = {
         }
       }
 
-      console.log("All methods failed or returned no results");
-      return [];
+      console.log(`Found ${allResults.length} unique announcements total`);
+      return allResults;
     } catch (error) {
       console.error("All Binance fetch methods failed:", error);
       return [];
@@ -191,9 +208,14 @@ async function fetchFromRSS(): Promise<Announcement[]> {
                 ].some((word) => title.toLowerCase().includes(word));
 
                 if (!isDelisting && (isListing || symbols.length > 0)) {
-                  // Create a unique ID
+                  // Simplify the title for better deduplication
+                  const simplifiedTitle = title.includes("Will Add")
+                    ? `Binance Lists ${symbols.join(", ")}`
+                    : title;
+
+                  // Create a unique ID based on symbols and link
                   const id = `binance-${Buffer.from(
-                    `${title}-${link}`
+                    `${symbols.sort().join(",")}-${link}`
                   ).toString("base64")}`;
 
                   // Add to results if not a duplicate
@@ -201,14 +223,14 @@ async function fetchFromRSS(): Promise<Announcement[]> {
                     results.push({
                       id,
                       exchange: "binance",
-                      title,
+                      title: simplifiedTitle,
                       link,
                       date: new Date(pubDate).toISOString(),
                       symbols,
                     });
 
                     console.log(
-                      `Added Binance announcement (from RSS): "${title}"`
+                      `Added Binance announcement (from RSS): "${simplifiedTitle}"`
                     );
                   }
                 }
@@ -216,11 +238,6 @@ async function fetchFromRSS(): Promise<Announcement[]> {
             } catch (itemError) {
               console.log("Error processing RSS item:", itemError.message);
             }
-          }
-
-          if (results.length > 0) {
-            console.log(`Found ${results.length} valid announcements via RSS`);
-            return results;
           }
         } catch (parseError) {
           console.error("Error parsing RSS XML:", parseError.message);
@@ -311,22 +328,26 @@ async function fetchFromPublicAPI(): Promise<Announcement[]> {
               }
             }
 
-            const id = `binance-${Buffer.from(`${title}-${link}`).toString(
-              "base64"
-            )}`;
+            // Simplify the title for better deduplication
+            const simplifiedTitle = `Binance Lists ${symbols.join(", ")}`;
+
+            // Create ID based on symbols for better deduplication
+            const id = `binance-${Buffer.from(
+              `${symbols.sort().join(",")}-listing`
+            ).toString("base64")}`;
 
             if (!results.some((a) => a.id === id)) {
               results.push({
                 id,
                 exchange: "binance",
-                title,
+                title: simplifiedTitle,
                 link,
                 date: new Date(pubDate).toISOString(),
                 symbols,
               });
 
               console.log(
-                `Added Binance announcement (from CoinGecko): "${title}"`
+                `Added Binance announcement (from CoinGecko): "${simplifiedTitle}"`
               );
             }
           }
@@ -430,22 +451,29 @@ async function fetchFromArchiveAPI(): Promise<Announcement[]> {
                 }
               }
 
-              const id = `binance-${Buffer.from(`${title}-${link}`).toString(
-                "base64"
-              )}`;
+              // Simplify the title for better deduplication
+              const simplifiedTitle =
+                symbols.length > 0
+                  ? `Binance Lists ${symbols.join(", ")}`
+                  : title;
+
+              // Create ID based on symbols for better deduplication
+              const id = `binance-${Buffer.from(
+                `${symbols.sort().join(",")}-news`
+              ).toString("base64")}`;
 
               if (!results.some((a) => a.id === id)) {
                 results.push({
                   id,
                   exchange: "binance",
-                  title,
+                  title: simplifiedTitle,
                   link,
                   date: new Date(pubDate).toISOString(),
                   symbols,
                 });
 
                 console.log(
-                  `Added Binance announcement (from CryptoPanic): "${title}"`
+                  `Added Binance announcement (from CryptoPanic): "${simplifiedTitle}"`
                 );
               }
             }
@@ -566,13 +594,14 @@ async function fetchFromMarketData(): Promise<Announcement[]> {
 
       // Create announcement entries for recent pairs
       for (const pair of recentPairs) {
-        const title = `Binance Lists ${pair.baseAsset} (${pair.baseAsset})`;
+        const title = `Binance Lists ${pair.baseAsset}`;
         const link = `https://www.binance.com/en/trade/${pair.baseAsset}_${pair.quoteAsset}`;
         const symbols = [pair.baseAsset];
 
-        const id = `binance-${Buffer.from(`${title}-${link}`).toString(
-          "base64"
-        )}`;
+        // Create ID based on symbols for better deduplication
+        const id = `binance-${Buffer.from(
+          `${symbols.sort().join(",")}-market`
+        ).toString("base64")}`;
 
         if (!results.some((a) => a.id === id)) {
           results.push({
