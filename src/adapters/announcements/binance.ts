@@ -31,6 +31,18 @@ async function fetchWithPlaywright(): Promise<Announcement[]> {
         process.env.PLAYWRIGHT_BROWSERS_PATH || "not set"
       }`
     );
+    console.log(
+      `PW_BROWSERS_PATH_CACHE: ${
+        process.env.PW_BROWSERS_PATH_CACHE || "not set"
+      }`
+    );
+
+    // Ensure browser path is properly set
+    if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
+      if (process.env.NODE_ENV === "production") {
+        process.env.PLAYWRIGHT_BROWSERS_PATH = "/app/.playwright-browsers";
+      }
+    }
 
     // Install browser on demand - critical for hosted environments
     try {
@@ -42,24 +54,42 @@ async function fetchWithPlaywright(): Promise<Announcement[]> {
       console.log("Playwright install output:", output);
     } catch (installError) {
       console.error("Error installing browser:", installError.message);
+      // Continue and attempt to use existing browser
+    }
+
+    // Check for browser executable
+    try {
+      const { execSync } = require("child_process");
+      console.log("Checking for browser executable...");
+      const browserCheck = execSync(
+        "find /app -name chrome -o -name chromium",
+        {
+          encoding: "utf8",
+        }
+      );
+      console.log("Browser check result:", browserCheck);
+    } catch (checkError) {
+      console.log("Browser check error (non-fatal):", checkError.message);
     }
 
     console.log("Launching browser...");
     browser = await chromium.launch({
       headless: true,
+      executablePath: process.env.CHROME_EXECUTABLE_PATH,
       args: [
-        "--no-sandbox",
+        "--disable-gpu",
         "--disable-setuid-sandbox",
+        "--no-sandbox",
         "--disable-dev-shm-usage",
         "--disable-accelerated-2d-canvas",
         "--no-first-run",
         "--no-zygote",
-        "--disable-gpu",
         "--hide-scrollbars",
         "--mute-audio",
         "--disable-web-security",
         "--disable-notifications",
         "--disable-extensions",
+        "--disable-infobars",
       ],
     });
 
@@ -74,7 +104,7 @@ async function fetchWithPlaywright(): Promise<Announcement[]> {
     // Create a more stealth context with additional parameters to avoid detection
     const context = await browser.newContext({
       userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
       viewport: { width: 1920, height: 1080 },
       screen: { width: 1920, height: 1080 },
       hasTouch: false,
@@ -134,8 +164,8 @@ async function fetchWithPlaywright(): Promise<Announcement[]> {
 
         // First go to the homepage to avoid direct access detection
         await page.goto("https://www.binance.com/en", {
-          waitUntil: "domcontentloaded",
-          timeout: 30000,
+          waitUntil: "networkidle",
+          timeout: 60000,
         });
 
         console.log("Loaded Binance homepage");
@@ -143,8 +173,8 @@ async function fetchWithPlaywright(): Promise<Announcement[]> {
 
         // Go directly to the announcements page
         await page.goto(url, {
-          waitUntil: "domcontentloaded",
-          timeout: 30000,
+          waitUntil: "networkidle",
+          timeout: 60000,
         });
 
         console.log(`Loaded page: ${url}`);

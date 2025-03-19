@@ -40,9 +40,15 @@ services:
 
       # Check interval in minutes
       - CHECK_INTERVAL=15
+
       # Playwright browser paths - set both for maximum compatibility
       - PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers
       - PW_BROWSERS_PATH_CACHE=/root/.cache/ms-playwright
+
+      # Display for Playwright
+      - DISPLAY=:99
+      - XVFB_WHD=1920x1080x24
+
       # Debug flags
       - DEBUG=pw:api,pw:browser
     volumes:
@@ -68,3 +74,4 @@ volumes:
   playwright_browsers:
     driver: local
   playwright_cache:
+    driver: local

@@ -28,6 +28,9 @@ RUN apt-get update && apt-get install -y \
     libappindicator3-1 \
     xdg-utils \
     wget \
+    curl \
+    unzip \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy package files first for better layer caching
@@ -42,27 +45,39 @@ RUN chmod -R 777 /app/.playwright-browsers /root/.cache/ms-playwright
 
 # Set environment variable for Playwright browsers to both locations
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers
+ENV PW_BROWSERS_PATH_CACHE=/root/.cache/ms-playwright
+ENV NODE_ENV=production
 
 # Install Playwright browsers in both locations for redundancy
 RUN npx playwright install chromium --with-deps
 
 # Also symlink the directory to handle both paths
-RUN ln -s /app/.playwright-browsers /root/.cache/ms-playwright || true
+RUN ln -s /app/.playwright-browsers/* /root/.cache/ms-playwright/ || true
 
 # Verify browser installation and output detailed info
 RUN ls -la /app/.playwright-browsers || echo "No browsers in /app directory"
 RUN ls -la /root/.cache/ms-playwright || echo "No browsers in /root directory"
-RUN find /app -name "headless_shell" -type f | xargs -r ls -la || echo "No headless_shell found in /app"
-RUN find /root -name "headless_shell" -type f | xargs -r ls -la || echo "No headless_shell found in /root"
+RUN find /app -name "chrome" -type f | xargs -r ls -la || echo "No chrome found in /app"
+RUN find /root -name "chrome" -type f | xargs -r ls -la || echo "No chrome found in /root"
+
+# Find and set Chrome executable path if possible
+RUN CHROME_PATH=$(find /app -name "chrome" -type f | head -n 1) && \
+    if [ -n "$CHROME_PATH" ]; then \
+      echo "export CHROME_EXECUTABLE_PATH=$CHROME_PATH" >> /root/.bashrc && \
+      echo "Found Chrome at: $CHROME_PATH"; \
+    fi
 
 # Copy application code
 COPY . .
+
+# Make the installation script executable
+RUN chmod +x /app/install-browsers.sh
 
 # Build TypeScript code
 RUN npm run build
 
 # Add startup script to ensure environment is properly configured
-RUN echo '#!/bin/bash\necho "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH"\necho "Checking Playwright browser locations:"\nfind /app -name "headless_shell" -type f | xargs -r ls -la || echo "No headless_shell found in /app"\nfind /root -name "headless_shell" -type f | xargs -r ls -la || echo "No headless_shell found in /root"\nLS_PWD="$(ls -la $PWD)"\necho "Current directory: $PWD"\necho "$LS_PWD"\nexec node dist/index.js' > /app/startup.sh
+RUN echo '#!/bin/bash\necho "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH"\necho "PW_BROWSERS_PATH_CACHE=$PW_BROWSERS_PATH_CACHE"\necho "CHROME_EXECUTABLE_PATH=$CHROME_EXECUTABLE_PATH"\necho "Checking Playwright browser locations:"\nfind /app -name "chrome" -type f | xargs -r ls -la || echo "No chrome found in /app"\nfind /root -name "chrome" -type f | xargs -r ls -la || echo "No chrome found in /root"\nLS_PWD="$(ls -la $PWD)"\necho "Current directory: $PWD"\necho "$LS_PWD"\nexec node dist/index.js' > /app/startup.sh
 RUN chmod +x /app/startup.sh
 
 # Set environment variable for Node.js to report uncaught exceptions
