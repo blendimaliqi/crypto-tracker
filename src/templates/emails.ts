@@ -156,92 +156,136 @@ export function getAnnouncementsEmailTemplate(
   announcementsByExchange: { [key: string]: any[] }
 ): string {
   let html = `
-  <!DOCTYPE html>
-  <html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>New Crypto Announcements</title>
-    <style>
-      ${getEmailBaseStyles()}
-      .announcement-title {
-        font-weight: 600;
-        color: #2c3e50;
-      }
-      a {
-        color: #3498db;
-        text-decoration: none;
-      }
-      a:hover {
-        text-decoration: underline;
-      }
-      .date {
-        font-size: 13px;
-        color: #7f8c8d;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="container">
-      <div class="header">
-        <h1>Crypto Announcements Alert</h1>
-      </div>
-      <p>We've detected ${announcements.length} new crypto announcement${
-    announcements.length > 1 ? "s" : ""
-  } across various exchanges:</p>`;
+    <html>
+      <head>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+          }
+          h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+          }
+          h2 {
+            color: #2c3e50;
+            margin-top: 30px;
+          }
+          .announcement {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-left: 4px solid #3498db;
+            border-radius: 4px;
+          }
+          .announcement h3 {
+            margin-top: 0;
+            margin-bottom: 5px;
+            color: #2980b9;
+          }
+          .announcement p {
+            margin-top: 5px;
+            color: #555;
+          }
+          .announcement .description {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+            margin-bottom: 10px;
+            font-style: italic;
+          }
+          .announcement .meta {
+            font-size: 12px;
+            color: #888;
+          }
+          .announcement a {
+            color: #3498db;
+            text-decoration: none;
+          }
+          .announcement a:hover {
+            text-decoration: underline;
+          }
+          .symbols {
+            margin-top: 8px;
+            font-size: 13px;
+          }
+          .symbol {
+            display: inline-block;
+            background-color: #e8f4fc;
+            border: 1px solid #c5e5fc;
+            border-radius: 3px;
+            padding: 2px 8px;
+            margin-right: 5px;
+            margin-bottom: 5px;
+            color: #2980b9;
+            font-size: 12px;
+          }
+          .footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            font-size: 12px;
+            color: #888;
+          }
+        </style>
+      </head>
+      <body>
+        <h1>New Cryptocurrency Announcements</h1>
+        <p>The Crypto Tracker has detected ${
+          announcements.length
+        } new announcement${announcements.length > 1 ? "s" : ""}.</p>
+  `;
 
-  // Add tables for each exchange
-  Object.entries(announcementsByExchange).forEach(([exchange, items]) => {
-    html += `
-      <h2>${exchange.toUpperCase()} (${items.length} announcement${
+  // Add each exchange's announcements
+  for (const [exchange, items] of Object.entries(announcementsByExchange)) {
+    const exchangeName = exchange.toUpperCase();
+    html += `<h2>${exchangeName} (${items.length} announcement${
       items.length > 1 ? "s" : ""
-    })</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Announcement</th>
-            <th>Date</th>
-          </tr>
-        </thead>
-        <tbody>`;
+    })</h2>`;
 
-    items.forEach((announcement) => {
-      const badgeClass = getExchangeBadgeClass(exchange);
-
-      // Format the date to be more readable
-      const date = new Date(announcement.date);
-      const formattedDate = date.toLocaleString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-
+    // Add each announcement
+    for (const announcement of items) {
       html += `
-          <tr>
-            <td>
-              <span class="announcement-title">${announcement.title}</span>
-              <br>
-              <a href="${announcement.link}" target="_blank">View announcement</a>
-            </td>
-            <td class="date">${formattedDate}</td>
-          </tr>`;
-    });
+        <div class="announcement">
+          <h3><a href="${announcement.link}" target="_blank">${
+        announcement.title
+      }</a></h3>
+          ${
+            announcement.description
+              ? `<div class="description">${announcement.description}</div>`
+              : ""
+          }
+          <div class="meta">Date: ${new Date(
+            announcement.date
+          ).toLocaleString()}</div>
+          `;
 
-    html += `
-        </tbody>
-      </table>`;
-  });
+      // Add symbols if available
+      if (announcement.symbols && announcement.symbols.length > 0) {
+        html += `<div class="symbols">`;
+        for (const symbol of announcement.symbols) {
+          html += `<span class="symbol">${symbol}</span>`;
+        }
+        html += `</div>`;
+      }
 
+      html += `</div>`;
+    }
+  }
+
+  // Add footer
   html += `
-      <div class="footer">
-        <p>Happy trading!</p>
-        <p>© ${new Date().getFullYear()} Crypto Tracker - Announcements Monitor</p>
-      </div>
-    </div>
-  </body>
-  </html>`;
+        <div class="footer">
+          <p>This is an automated notification from the Crypto Tracker. Please do not reply to this email.</p>
+        </div>
+      </body>
+    </html>
+  `;
 
   return html;
 }

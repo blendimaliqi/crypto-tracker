@@ -41,7 +41,7 @@ const binanceAdapter: AnnouncementAdapter = {
 
       const allResults: Announcement[] = [];
       const seenIds = new Set<string>();
-      const seenTitlesAndSymbols = new Set<string>();
+      const seenDedupeKeys = new Set<string>();
 
       for (const method of methods) {
         try {
@@ -53,19 +53,21 @@ const binanceAdapter: AnnouncementAdapter = {
 
           // Process each result and only add if not a duplicate
           for (const announcement of results) {
-            // Create a unique key based on title and symbols
-            const titleAndSymbols = `${
-              announcement.title
-            }-${announcement.symbols.sort().join(",")}`;
+            // Use the dedupeKey for deduplication, but keep original title
+            const dedupeKey = announcement.dedupeKey || announcement.title;
 
-            // Add only if we haven't seen this ID or title+symbols combination before
+            // Add only if we haven't seen this ID or dedupeKey combination before
             if (
               !seenIds.has(announcement.id) &&
-              !seenTitlesAndSymbols.has(titleAndSymbols)
+              !seenDedupeKeys.has(dedupeKey)
             ) {
               seenIds.add(announcement.id);
-              seenTitlesAndSymbols.add(titleAndSymbols);
-              allResults.push(announcement);
+              seenDedupeKeys.add(dedupeKey);
+
+              // Remove the dedupeKey property before adding to results
+              const { dedupeKey: _, ...cleanAnnouncement } = announcement;
+              allResults.push(cleanAnnouncement);
+
               console.log(`Added unique announcement: "${announcement.title}"`);
             } else {
               console.log(`Skipping duplicate: "${announcement.title}"`);
@@ -154,7 +156,7 @@ async function fetchFromRSS(): Promise<Announcement[]> {
           for (const item of items) {
             try {
               // Extract data (handling both RSS and Atom formats)
-              const title = item.title || "";
+              const fullTitle = item.title || "";
               const link = item.link?.href || item.link || "";
               const pubDate =
                 item.pubDate ||
@@ -162,10 +164,10 @@ async function fetchFromRSS(): Promise<Announcement[]> {
                 item.updated ||
                 new Date().toISOString();
 
-              if (title && link && title.length > 10) {
+              if (fullTitle && link && fullTitle.length > 10) {
                 // Extract symbols from title
                 const symbols: string[] = [];
-                const symbolMatches = title.match(/\(([A-Z0-9]{2,10})\)/g);
+                const symbolMatches = fullTitle.match(/\(([A-Z0-9]{2,10})\)/g);
 
                 if (symbolMatches) {
                   symbolMatches.forEach((match) => {
@@ -194,7 +196,7 @@ async function fetchFromRSS(): Promise<Announcement[]> {
                   "remov",
                   "deprecat",
                   "discontinu",
-                ].some((word) => title.toLowerCase().includes(word));
+                ].some((word) => fullTitle.toLowerCase().includes(word));
 
                 // Check if it contains listing-related keywords
                 const isListing = [
@@ -205,13 +207,11 @@ async function fetchFromRSS(): Promise<Announcement[]> {
                   "new crypto",
                   "trading",
                   "new pair",
-                ].some((word) => title.toLowerCase().includes(word));
+                ].some((word) => fullTitle.toLowerCase().includes(word));
 
                 if (!isDelisting && (isListing || symbols.length > 0)) {
-                  // Simplify the title for better deduplication
-                  const simplifiedTitle = title.includes("Will Add")
-                    ? `Binance Lists ${symbols.join(", ")}`
-                    : title;
+                  // Create simplified title for main title
+                  const simplifiedTitle = `Binance Lists ${symbols.join(", ")}`;
 
                   // Create a unique ID based on symbols and link
                   const id = `binance-${Buffer.from(
@@ -223,14 +223,17 @@ async function fetchFromRSS(): Promise<Announcement[]> {
                     results.push({
                       id,
                       exchange: "binance",
-                      title: simplifiedTitle,
+                      title: simplifiedTitle, // Use the simplified title
+                      description: fullTitle, // Store the detailed title as description
                       link,
                       date: new Date(pubDate).toISOString(),
                       symbols,
+                      // Add dedupeKey for the outer deduplication logic
+                      dedupeKey: simplifiedTitle,
                     });
 
                     console.log(
-                      `Added Binance announcement (from RSS): "${simplifiedTitle}"`
+                      `Added Binance announcement (from RSS): "${simplifiedTitle}" with description "${fullTitle}"`
                     );
                   }
                 }
@@ -294,7 +297,7 @@ async function fetchFromPublicAPI(): Promise<Announcement[]> {
       for (const update of response.data.status_updates) {
         try {
           if (update.description && update.category === "listing") {
-            const title = update.description;
+            const fullTitle = update.description;
             const link =
               update.url || "https://www.binance.com/en/support/announcement";
             const pubDate = update.created_at;
@@ -305,7 +308,7 @@ async function fetchFromPublicAPI(): Promise<Announcement[]> {
               symbols.push(update.project.symbol.toUpperCase());
             } else {
               // Extract from title as fallback
-              const symbolMatches = title.match(/\(([A-Z0-9]{2,10})\)/g);
+              const symbolMatches = fullTitle.match(/\(([A-Z0-9]{2,10})\)/g);
               if (symbolMatches) {
                 symbolMatches.forEach((match) => {
                   const symbol = match.replace(/[()]/g, "");
@@ -328,7 +331,7 @@ async function fetchFromPublicAPI(): Promise<Announcement[]> {
               }
             }
 
-            // Simplify the title for better deduplication
+            // Create simplified title for main title
             const simplifiedTitle = `Binance Lists ${symbols.join(", ")}`;
 
             // Create ID based on symbols for better deduplication
@@ -340,14 +343,16 @@ async function fetchFromPublicAPI(): Promise<Announcement[]> {
               results.push({
                 id,
                 exchange: "binance",
-                title: simplifiedTitle,
+                title: simplifiedTitle, // Use the simplified title
+                description: fullTitle, // Store the detailed title as description
                 link,
                 date: new Date(pubDate).toISOString(),
                 symbols,
+                dedupeKey: simplifiedTitle,
               });
 
               console.log(
-                `Added Binance announcement (from CoinGecko): "${simplifiedTitle}"`
+                `Added Binance announcement (from CoinGecko): "${simplifiedTitle}" with description "${fullTitle}"`
               );
             }
           }
@@ -399,14 +404,14 @@ async function fetchFromArchiveAPI(): Promise<Announcement[]> {
       for (const post of response.data.results) {
         try {
           if (post.title && post.url) {
-            const title = post.title;
+            const fullTitle = post.title;
             const link = post.url;
             const pubDate = post.created_at;
 
             // Check if it's relevant to Binance listings
             const isBinance =
               (post.source && post.source.domain === "binance.com") ||
-              title.toLowerCase().includes("binance") ||
+              fullTitle.toLowerCase().includes("binance") ||
               link.includes("binance.com");
 
             const isListing = [
@@ -417,7 +422,7 @@ async function fetchFromArchiveAPI(): Promise<Announcement[]> {
               "new crypto",
               "trading",
               "new pair",
-            ].some((word) => title.toLowerCase().includes(word));
+            ].some((word) => fullTitle.toLowerCase().includes(word));
 
             if (isBinance && isListing) {
               // Extract symbols
@@ -428,7 +433,7 @@ async function fetchFromArchiveAPI(): Promise<Announcement[]> {
                 }
               } else {
                 // Extract from title as fallback
-                const symbolMatches = title.match(/\(([A-Z0-9]{2,10})\)/g);
+                const symbolMatches = fullTitle.match(/\(([A-Z0-9]{2,10})\)/g);
                 if (symbolMatches) {
                   symbolMatches.forEach((match) => {
                     const symbol = match.replace(/[()]/g, "");
@@ -451,11 +456,11 @@ async function fetchFromArchiveAPI(): Promise<Announcement[]> {
                 }
               }
 
-              // Simplify the title for better deduplication
+              // Create simplified title for main title
               const simplifiedTitle =
                 symbols.length > 0
                   ? `Binance Lists ${symbols.join(", ")}`
-                  : title;
+                  : fullTitle;
 
               // Create ID based on symbols for better deduplication
               const id = `binance-${Buffer.from(
@@ -466,14 +471,16 @@ async function fetchFromArchiveAPI(): Promise<Announcement[]> {
                 results.push({
                   id,
                   exchange: "binance",
-                  title: simplifiedTitle,
+                  title: simplifiedTitle, // Use the simplified title
+                  description: fullTitle, // Store the detailed title as description
                   link,
                   date: new Date(pubDate).toISOString(),
                   symbols,
+                  dedupeKey: simplifiedTitle,
                 });
 
                 console.log(
-                  `Added Binance announcement (from CryptoPanic): "${simplifiedTitle}"`
+                  `Added Binance announcement (from CryptoPanic): "${simplifiedTitle}" with description "${fullTitle}"`
                 );
               }
             }
@@ -594,7 +601,10 @@ async function fetchFromMarketData(): Promise<Announcement[]> {
 
       // Create announcement entries for recent pairs
       for (const pair of recentPairs) {
-        const title = `Binance Lists ${pair.baseAsset}`;
+        // Create a full descriptive title similar to what's on the website
+        const fullTitle = `Binance Will Add ${pair.baseAsset} (${pair.baseAsset}) on Earn, Buy Crypto, Margin, Convert & Futures`;
+        // Create simplified title for main title
+        const simplifiedTitle = `Binance Lists ${pair.baseAsset}`;
         const link = `https://www.binance.com/en/trade/${pair.baseAsset}_${pair.quoteAsset}`;
         const symbols = [pair.baseAsset];
 
@@ -607,14 +617,16 @@ async function fetchFromMarketData(): Promise<Announcement[]> {
           results.push({
             id,
             exchange: "binance",
-            title,
+            title: simplifiedTitle, // Use the simplified title
+            description: fullTitle, // Store the detailed title as description
             link,
             date: pair.listingDate.toISOString(),
             symbols,
+            dedupeKey: simplifiedTitle,
           });
 
           console.log(
-            `Added Binance announcement (from market data): "${title}"`
+            `Added Binance announcement (from market data): "${simplifiedTitle}" with description "${fullTitle}"`
           );
         }
       }
@@ -627,6 +639,14 @@ async function fetchFromMarketData(): Promise<Announcement[]> {
   }
 
   return results;
+}
+
+// Extend the Announcement type to include our deduplication key and description field
+declare module "../../utils" {
+  interface Announcement {
+    dedupeKey?: string;
+    description?: string;
+  }
 }
 
 export default binanceAdapter;
